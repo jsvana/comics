@@ -14,6 +14,13 @@ final class CatalogStore: @unchecked Sendable {
     /// `UserDefaults` key for a remote URL chosen in Settings.
     static let remoteDefaultsKey = "catalogURL"
 
+    /// A catalog address typed in Settings: an `https` URL with a host, else nil.
+    static func parseRemote(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https", url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
     enum RefreshOutcome: Equatable {
         /// Checked less than 24 hours ago; no request made.
         case notDue

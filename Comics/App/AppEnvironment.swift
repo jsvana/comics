@@ -21,14 +21,6 @@ struct AppEnvironment {
     let usesICloud: Bool
 
     init(launchArgs: LaunchArgs) {
-        self.launchArgs = launchArgs
-        let http: HTTPFetching
-        let dbPath: String
-        let imageDir: URL
-        let cloud: KeyValueCloud
-        let catalogFile: URL
-        let catalogDir: URL
-        let remote: URL
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let support = try! FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                    appropriateFor: nil, create: true)
@@ -36,41 +28,50 @@ struct AppEnvironment {
             // A build without the fixture folder cannot run fixture mode; failing loudly beats
             // silently reading the real database.
             guard let fixture = FixtureHTTP.bundled() else { fatalError("-fixtureCatalog YES but no bundled Fixtures") }
-            http = fixture
-            catalogFile = fixture.root.appendingPathComponent("fixture-catalog.json")
-            imageDir = caches.appendingPathComponent("FixtureImages", isDirectory: true)
-            catalogDir = support.appendingPathComponent("FixtureCatalog", isDirectory: true)
-            dbPath = try! Self.fixtureDatabasePath(reset: launchArgs.resetFixture, images: imageDir, catalog: catalogDir)
-            // Served by FixtureHTTP, which has no such file: a refresh is a silent 404, never a request.
-            remote = URL(string: "https://\(FixtureHTTP.host)/remote-catalog.json")!
-            cloud = MemoryCloud()
-            usesICloud = false
+            let imageDir = caches.appendingPathComponent("FixtureImages", isDirectory: true)
+            let catalogDir = support.appendingPathComponent("FixtureCatalog", isDirectory: true)
+            let dbPath = try! Self.fixtureDatabasePath(reset: launchArgs.resetFixture, images: imageDir, catalog: catalogDir)
+            self.init(
+                launchArgs: launchArgs, http: fixture,
+                // Place-keeping is the app's one durable promise: a database that cannot open is fatal,
+                // not something to paper over with an in-memory copy.
+                db: try! Database(path: dbPath), imageDir: imageDir, cloud: MemoryCloud(), usesICloud: false,
+                // Two small files (the bundled catalog and any adopted copy) are read here, at launch.
+                bundledCatalog: try! Data(contentsOf: fixture.root.appendingPathComponent("fixture-catalog.json")),
+                catalogDir: catalogDir,
+                // Served by FixtureHTTP, which has no such file: a refresh is a silent 404, never a request.
+                remote: URL(string: "https://\(FixtureHTTP.host)/remote-catalog.json")!,
+                network: nil)
         } else {
-            http = PoliteHTTPClient()
             guard let bundled = Bundle.main.url(forResource: "catalog", withExtension: "json") else {
                 fatalError("catalog.json is missing from the app bundle")
             }
-            catalogFile = bundled
-            imageDir = caches.appendingPathComponent("Images", isDirectory: true)
-            dbPath = try! Database.defaultPath()
-            catalogDir = support.appendingPathComponent("Comics", isDirectory: true)
-            remote = Self.savedRemote() ?? CatalogStore.defaultRemote
-            usesICloud = launchArgs.icloud
-            cloud = launchArgs.icloud ? UbiquitousCloud() : MemoryCloud()
+            self.init(
+                launchArgs: launchArgs, http: PoliteHTTPClient(),
+                db: try! Database(path: try! Database.defaultPath()),
+                imageDir: caches.appendingPathComponent("Images", isDirectory: true),
+                cloud: launchArgs.icloud ? UbiquitousCloud() : MemoryCloud(), usesICloud: launchArgs.icloud,
+                bundledCatalog: try! Data(contentsOf: bundled),
+                catalogDir: support.appendingPathComponent("Comics", isDirectory: true),
+                remote: Self.savedRemote() ?? CatalogStore.defaultRemote,
+                network: NetworkCost())
         }
-        // Place-keeping is the app's one durable promise: a database that cannot open is fatal,
-        // not something to paper over with an in-memory copy.
-        db = try! Database(path: dbPath)
+    }
+
+    /// Wires the services together from their parts (tests pass stubs and in-memory storage).
+    init(launchArgs: LaunchArgs, http: HTTPFetching, db: Database, imageDir: URL, cloud: KeyValueCloud,
+         usesICloud: Bool, bundledCatalog: Data, catalogDir: URL, remote: URL, network: NetworkCost?) {
+        self.launchArgs = launchArgs
+        self.db = db
+        self.usesICloud = usesICloud
         let library = LibraryStore(db: db, index: IndexFetcher(http: http))
         self.library = library
         places = PlaceKeeper(db: db)
         mirror = CloudMirror(cloud: cloud, library: library, places: places)
-        let network = launchArgs.fixtureCatalog ? nil : NetworkCost()
         images = ImageCache(http: http, directory: imageDir)
         loader = StripLoader(db: db, library: library, extractor: StripExtractor(http: http),
                              images: images, unmetered: { network?.unmetered ?? false })
-        // Two small files (the bundled catalog and any adopted copy) are read here, at launch.
-        catalog = CatalogStore(bundled: try! Data(contentsOf: catalogFile), http: http, storage: catalogDir, remote: remote)
+        catalog = CatalogStore(bundled: bundledCatalog, http: http, storage: catalogDir, remote: remote)
         catalog.onAdopt = { adopted in await library.adoptDefinitions(from: adopted) }
     }
 
@@ -78,7 +79,18 @@ struct AppEnvironment {
 
     /// The catalog URL chosen in Settings, if any.
     static func savedRemote() -> URL? {
-        UserDefaults.standard.string(forKey: CatalogStore.remoteDefaultsKey).flatMap(URL.init(string:))
+        UserDefaults.standard.string(forKey: CatalogStore.remoteDefaultsKey).flatMap(CatalogStore.parseRemote)
+    }
+
+    /// Remembers the catalog address chosen in Settings (nil goes back to the default). Never in
+    /// fixture mode: its `fixture.invalid` address must not reach the real app's settings.
+    static func persistRemote(_ url: URL?, fixtureMode: Bool, defaults: UserDefaults = .standard) {
+        guard !fixtureMode else { return }
+        if let url, url != CatalogStore.defaultRemote {
+            defaults.set(url.absoluteString, forKey: CatalogStore.remoteDefaultsKey)
+        } else {
+            defaults.removeObject(forKey: CatalogStore.remoteDefaultsKey)
+        }
     }
 
     /// Run whenever the app becomes active: drop comics removed over 30 days ago, check the remote
@@ -86,11 +98,29 @@ struct AppEnvironment {
     /// strips in comics not refreshed in the last 30 minutes. Each step is quiet on failure.
     func becameActive() async {
         let library = library
-        await Task.detached { library.purgeRemoved() }.value
-        async let catalogChecked = refreshCatalog(force: false)
-        await mirror.restoreMissing(catalog: catalog.catalog)
-        await refreshLibrary(force: false)
-        _ = await catalogChecked
+        let catalogStore = catalog
+        let mirror = mirror
+        await Self.activate(
+            purge: { await Task.detached { library.purgeRemoved() }.value },
+            checkCatalog: { await refreshCatalog(force: false) },
+            currentCatalog: { await MainActor.run { catalogStore.catalog } },
+            restore: { await mirror.restoreMissing(catalog: $0) },
+            refreshLibrary: { await refreshLibrary(force: false) })
+    }
+
+    /// The steps of `becameActive`, in order. The catalog is read (on the main actor, where it
+    /// changes) after the remote check has finished, so a comic the new catalog adds can be restored.
+    static func activate(
+        purge: () async -> Void,
+        checkCatalog: () async -> Void,
+        currentCatalog: () async -> Catalog,
+        restore: (Catalog) async -> Void,
+        refreshLibrary: () async -> Void
+    ) async {
+        await purge()
+        await checkCatalog()
+        await restore(await currentCatalog())
+        await refreshLibrary()
     }
 
     /// Checks the remote catalog (daily, or now with `force`). Never in fixture mode.

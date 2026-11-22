@@ -121,6 +121,14 @@ final class Database: @unchecked Sendable {
                 t.add(column: "baseCount", .integer)
             }
         }
+        m.registerMigration("v3") { db in
+            // v2 left baseCount empty for rows that already existed; give them the comic's current
+            // strip count so every row follows the same "new strips" rule.
+            try db.execute(sql: """
+                UPDATE comic SET baseCount = (SELECT COUNT(*) FROM strip WHERE strip.comicId = comic.id)
+                WHERE baseCount IS NULL
+                """)
+        }
         return m
     }
 }

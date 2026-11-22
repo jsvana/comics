@@ -92,21 +92,18 @@ struct SettingsView: View {
     @discardableResult
     private func applyURL() -> Bool {
         let text = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fixtureMode = env.launchArgs.fixtureCatalog
         if text.isEmpty {
-            UserDefaults.standard.removeObject(forKey: CatalogStore.remoteDefaultsKey)
+            AppEnvironment.persistRemote(nil, fixtureMode: fixtureMode)
             env.catalog.remote = CatalogStore.defaultRemote
             urlText = CatalogStore.defaultRemote.absoluteString
             return true
         }
-        guard let url = URL(string: text), ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
-            catalogMessage = "That isn't a web address."
+        guard let url = CatalogStore.parseRemote(text) else {
+            catalogMessage = "The catalog address must be an https:// web address."
             return false
         }
-        if url == CatalogStore.defaultRemote {
-            UserDefaults.standard.removeObject(forKey: CatalogStore.remoteDefaultsKey)
-        } else {
-            UserDefaults.standard.set(url.absoluteString, forKey: CatalogStore.remoteDefaultsKey)
-        }
+        AppEnvironment.persistRemote(url, fixtureMode: fixtureMode)
         env.catalog.remote = url
         return true
     }

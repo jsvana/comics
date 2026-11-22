@@ -67,25 +67,14 @@ final class LibraryModel {
         }
     }
 
-    /// Makes a thumbnail for each card whose bookmarked strip has none yet: from the image cache
-    /// when the strip is there, else by loading the strip (which the reader needs next anyway).
-    /// Runs in the caller's task, so leaving the library cancels it.
+    /// Makes a thumbnail for each card whose bookmarked strip has none yet, from the image cache
+    /// only: showing the library never fetches a page or an image. A card with no cached image
+    /// keeps its placeholder. Runs in the caller's task, so leaving the library cancels it.
     func loadThumbnails() async {
         for card in cards {
             guard !Task.isCancelled else { return }
-            if let image = card.image, thumbnails[card.id]?.source == image { continue }
-            guard let def = card.def, card.count > 0 else { continue }
-            var file: URL?
-            var source = card.image
-            if let image = card.image {
-                file = await env.images.cachedFile(for: image, comic: card.id)
-            }
-            if file == nil {
-                guard case .ready(let strip) = await env.loader.load(def, ordinal: card.bookmark) else { continue }
-                file = strip.image
-                source = strip.details.image
-            }
-            guard let file, let source, !Task.isCancelled else { continue }
+            guard let source = card.image, thumbnails[card.id]?.source != source else { continue }
+            guard let file = await env.images.cachedFile(for: source, comic: card.id), !Task.isCancelled else { continue }
             let pixels = Self.thumbnailPixels
             let image = await Task.detached(priority: .utility) {
                 ImageCache.downsampled(file, maxPixel: pixels)
@@ -99,7 +88,7 @@ final class LibraryModel {
     /// Starts indexing `def` and adds it to the library when the index is built. The comic appears
     /// in `cards` only then; cancelling or failing stores nothing.
     func add(_ def: ComicDef, start: StartPoint) {
-        guard addTasks[def.id] == nil else { return }
+        guard addTasks[def.id] == nil, adding[def.id] == nil else { return }
         let id = def.id
         adding[id] = AddState()
         addErrors[id] = nil
@@ -138,11 +127,12 @@ final class LibraryModel {
     private func finishAdd(_ id: String, failure: Error?) async {
         let cancelled = adding[id]?.cancelling ?? false
         addTasks[id] = nil
-        adding[id] = nil
         if let failure, !cancelled, !(failure is CancellationError) {
             addErrors[id] = Self.describe(failure)
         }
+        // Clear the progress row only once the new card is in `rows`, so the row never flips back to "Add".
         await reload()
+        adding[id] = nil
     }
 
     private static func describe(_ error: Error) -> String {
