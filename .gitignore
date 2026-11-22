@@ -1,0 +1,5 @@
+.superpowers/
+*.xcodeproj
+build/
+.DS_Store
+DerivedData/
