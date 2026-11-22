@@ -34,6 +34,11 @@ targets:
     platform: iOS
     sources:
       - path: ComicsTests
+        excludes:
+          - Fixtures
+      - path: ComicsTests/Fixtures
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Comics
     settings:
