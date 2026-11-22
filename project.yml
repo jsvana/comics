@@ -20,6 +20,8 @@ targets:
     platform: iOS
     sources:
       - path: Comics
+      - path: catalog/catalog.json
+        buildPhase: resources
     dependencies:
       - package: GRDB
     settings:

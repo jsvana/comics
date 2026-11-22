@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "version": 1,
+  "comics": [
+    {
+      "id": "xkcd",
+      "title": "xkcd",
+      "author": "Randall Munroe",
+      "home": "https://xkcd.com/",
+      "about": "A webcomic of romance, sarcasm, math, and language.",
+      "shape": "mixed",
+      "index": {
+        "kind": "numbered",
+        "latestURL": "https://xkcd.com/info.0.json",
+        "latestPattern": "\"num\":\\s*(?<n>\\d+)",
+        "first": 1,
+        "skip": [404]
+      },
+      "strip": {
+        "kind": "json",
+        "url": "https://xkcd.com/{key}/info.0.json",
+        "page": "https://xkcd.com/{key}/",
+        "image": "img",
+        "title": "safe_title",
+        "hover": "alt"
+      }
+    },
+    {
+      "id": "qc",
+      "title": "Questionable Content",
+      "author": "Jeph Jacques",
+      "home": "https://www.questionablecontent.net/",
+      "about": "An internet comic about robots, indie rock and relationships.",
+      "shape": "portrait",
+      "index": {
+        "kind": "numbered",
+        "latestURL": "https://www.questionablecontent.net/",
+        "latestPattern": "<img id=\"strip\" src=\"[^\"]*/comics/(?<n>\\d+)\\.png\"",
+        "first": 1,
+        "skip": []
+      },
+      "strip": {
+        "kind": "html",
+        "url": "https://www.questionablecontent.net/view.php?comic={key}",
+        "imagePattern": "<img id=\"strip\" src=\"(?<v>[^\"]+)\""
+      }
+    },
+    {
+      "id": "doa",
+      "title": "Dumbing of Age",
+      "author": "David Willis",
+      "home": "https://www.dumbingofage.com/",
+      "about": "College comedy and drama starring a cast of misfits.",
+      "shape": "wide",
+      "index": {
+        "kind": "wordpress",
+        "api": "https://www.dumbingofage.com/wp-json/wp/v2/comic"
+      },
+      "strip": {
+        "kind": "html",
+        "url": "{page}",
+        "imagePattern": "<div id=\"comic\"[^>]*>(?:(?!</div>).)*?<img[^>]*src=\"(?<v>[^\"]*wp-content/uploads/[^\"]+)\"",
+        "hoverPattern": "<div id=\"comic\"[^>]*>(?:(?!</div>).)*?<img[^>]*alt=\"(?<v>[^\"]*)\""
+      }
+    },
+    {
+      "id": "smbc",
+      "title": "Saturday Morning Breakfast Cereal",
+      "author": "Zach Weinersmith",
+      "home": "https://www.smbc-comics.com/",
+      "about": "Science, philosophy and jokes, with a bonus panel after the comic.",
+      "shape": "mixed",
+      "index": {
+        "kind": "linkList",
+        "url": "https://www.smbc-comics.com/comic/archive",
+        "itemPattern": "<option value=\"(?<key>comic/[^\"]+)\">(?<title>[^<]*)",
+        "pageTemplate": "https://www.smbc-comics.com/{key}",
+        "newestFirst": false
+      },
+      "strip": {
+        "kind": "html",
+        "url": "{page}",
+        "imagePattern": "<img[^>]*src=\"(?<v>[^\"]+)\"[^>]*id=\"cc-comic\"",
+        "hoverPattern": "<img[^>]*title=\"(?<v>[^\"]*)\"[^>]*id=\"cc-comic\"",
+        "bonusPattern": "<div id=\"aftercomic\"[^>]*><img[^>]*src=['\"](?<v>[^'\"]+)['\"]"
+      }
+    },
+    {
+      "id": "pbf",
+      "title": "The Perry Bible Fellowship",
+      "author": "Nicholas Gurewitch",
+      "home": "https://pbfcomics.com/",
+      "about": "Short, strange single-panel and multi-panel comics.",
+      "shape": "mixed",
+      "index": {
+        "kind": "linkList",
+        "url": "https://pbfcomics.com/comics/",
+        "itemPattern": "href=\"https://pbfcomics\\.com/comics/(?<key>(?!feed/|page/)[^\"/]+)/\"",
+        "pageTemplate": "https://pbfcomics.com/comics/{key}/",
+        "newestFirst": true
+      },
+      "strip": {
+        "kind": "html",
+        "url": "{page}",
+        "imagePattern": "<img[^>]*data-src=\"(?<v>[^\"]*wp-content/uploads/[^\"]+)\"[^>]*class=\"[^\"]*wp-post-image"
+      }
+    }
+  ]
+}
