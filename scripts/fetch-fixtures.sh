@@ -2,6 +2,7 @@
 # Saves real site pages into ComicsTests/Fixtures for offline parser tests.
 # Fetched pages are data only; nothing from them is executed.
 # Uses the generic client name from HTTPClientIdentity.
+# curl -f makes any non-2xx response a hard failure instead of saving an error page.
 # smbc-strip.webp is kept as a generic WebP sample; SMBC is not in the catalog (its site
 # refuses the generic client name), so its pages are no longer fetched.
 set -euo pipefail
@@ -12,7 +13,7 @@ mkdir -p "$OUT"
 
 fetch() { # fetch <user-agent> <url> <file>
   sleep 1
-  curl -sL -A "$1" -o "$OUT/$3" -w "%{http_code} %{size_download} $3\n" "$2"
+  curl -sfL -A "$1" -o "$OUT/$3" -w "%{http_code} %{size_download} $3\n" "$2"
   [ -s "$OUT/$3" ] || { echo "empty: $3" >&2; exit 1; }
 }
 
@@ -26,7 +27,7 @@ fetch "$UA" "https://www.questionablecontent.net/view.php?comic=4000" qc-4000.ht
 
 DOA="https://www.dumbingofage.com/wp-json/wp/v2/comic?per_page=100&order=asc&orderby=date&_fields=id,slug,date,title,link"
 sleep 1
-curl -sL -A "$UA" -D "$OUT/doa-headers.tmp" -o "$OUT/doa-page1.json" "$DOA"
+curl -sfL -A "$UA" -D "$OUT/doa-headers.tmp" -o "$OUT/doa-page1.json" "$DOA"
 grep -i '^x-wp-total:' "$OUT/doa-headers.tmp" | tr -d '\r' | awk '{print $2}' > "$OUT/doa-total.txt"
 rm "$OUT/doa-headers.tmp"
 DOA_LINK="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["link"])' "$OUT/doa-page1.json")"

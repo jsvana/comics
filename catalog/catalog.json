@@ -82,7 +82,7 @@
       "strip": {
         "kind": "html",
         "url": "{page}",
-        "imagePattern": "<img[^>]*data-src=\"(?<v>[^\"]*wp-content/uploads/[^\"]+)\"[^>]*class=\"[^\"]*wp-post-image"
+        "imagePattern": "pbf-comic-title.*?<img(?![^>]*post-thumbnail)[^>]*?(?:data-src|src)=['\"](?<v>[^'\"]*/wp-content/uploads/[^'\"]+)['\"]"
       }
     }
   ]
