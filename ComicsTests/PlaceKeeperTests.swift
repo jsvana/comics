@@ -121,4 +121,30 @@ final class PlaceKeeperTests: XCTestCase {
         _ = keeper.back("c")  // nothing to pop: no change
         XCTAssertEqual(fired.count, 3)
     }
+
+    func testWriteFailureCallsOnErrorAndDoesNotFireOnChange() throws {
+        let (keeper, db) = try make()
+        try db.queue.write { try $0.execute(sql: "CREATE TRIGGER nope BEFORE UPDATE ON comic BEGIN SELECT RAISE(ABORT, 'disk full'); END") }
+        var errors = 0, changes = 0
+        keeper.onError = { _ in errors += 1 }
+        keeper.onChange = { _ in changes += 1 }
+        keeper.step("c", to: 2141)
+        XCTAssertEqual(errors, 1)
+        XCTAssertEqual(changes, 0)
+        keeper.jump("c", to: 5000)
+        XCTAssertEqual(errors, 2)
+        XCTAssertEqual(changes, 0)
+        XCTAssertNil(keeper.back("c"))  // no history (jump rolled back); no error for "nothing to pop"
+        XCTAssertEqual(errors, 2)
+        XCTAssertEqual(keeper.bookmark("c"), 2140)
+        XCTAssertTrue(keeper.history("c").isEmpty)  // the failed jump's push was rolled back
+    }
+
+    func testBackKeepsHistoryWhenMoveImpossible() throws {
+        let (keeper, db) = try make(count: 100, bookmark: 10)
+        keeper.jump("c", to: 50)
+        try db.queue.write { try $0.execute(sql: "DELETE FROM strip WHERE comicId = 'c'") }
+        XCTAssertNil(keeper.back("c"))
+        XCTAssertEqual(keeper.history("c").map(\.ordinal), [10])
+    }
 }

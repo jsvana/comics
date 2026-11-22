@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import os
 
 /// A place the reader jumped away from.
 struct JumpEntry: Equatable, Codable {
@@ -29,13 +30,21 @@ final class PlaceKeeper: @unchecked Sendable {
     private let db: Database
     /// Called with the comic id after each committed change, on the calling thread.
     var onChange: ((String) -> Void)?
+    /// Called with the error when a write fails (the bookmark was NOT saved). Set once before use.
+    var onError: ((Error) -> Void)?
+
+    private static let log = Logger(subsystem: "com.jsvana.comics", category: "place")
 
     init(db: Database) { self.db = db }
 
     /// The bookmarked ordinal, or 1 if the comic has none.
     func bookmark(_ comic: String) -> Int {
-        let row = try? db.queue.read { try ComicRow.fetchOne($0, key: comic) }
-        return row?.bookmarkOrdinal ?? 1
+        do {
+            return try db.queue.read { try ComicRow.fetchOne($0, key: comic) }?.bookmarkOrdinal ?? 1
+        } catch {
+            Self.log.error("bookmark read failed for \(comic, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return 1
+        }
     }
 
     /// Next / previous: moves the bookmark without touching history.
@@ -72,18 +81,26 @@ final class PlaceKeeper: @unchecked Sendable {
             guard let top = try JumpRow.filter(Column("comicId") == comic).order(Column("id").desc).fetchOne(dbc) else {
                 return false
             }
+            // Move first; only pop the entry if the move happened, so history is never lost.
+            guard let moved = try Self.move(comic, to: top.ordinal, dbc) else { return false }
             try top.delete(dbc)
-            result = try Self.move(comic, to: top.ordinal, dbc)
-            return result != nil
+            result = moved
+            return true
         }
         return result
     }
 
     /// Newest first.
     func history(_ comic: String) -> [JumpEntry] {
-        let rows = (try? db.queue.read {
-            try JumpRow.filter(Column("comicId") == comic).order(Column("id").desc).fetchAll($0)
-        }) ?? []
+        let rows: [JumpRow]
+        do {
+            rows = try db.queue.read {
+                try JumpRow.filter(Column("comicId") == comic).order(Column("id").desc).fetchAll($0)
+            }
+        } catch {
+            Self.log.error("history read failed for \(comic, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return []
+        }
         return rows.map { JumpEntry(ordinal: $0.ordinal, key: $0.key, at: Date(timeIntervalSince1970: $0.at)) }
     }
 
@@ -111,8 +128,12 @@ final class PlaceKeeper: @unchecked Sendable {
 
     /// Runs `body` in one committed transaction; fires `onChange` afterwards if it reports a change.
     private func commit(_ comic: String, _ body: @escaping (GRDB.Database) throws -> Bool) {
-        let changed = (try? db.queue.write(body)) ?? false
-        if changed { onChange?(comic) }
+        do {
+            if try db.queue.write(body) { onChange?(comic) }
+        } catch {
+            Self.log.error("place write failed for \(comic, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            onError?(error)
+        }
     }
 
     /// The strip `ordinal` clamped to `1...count`, or nil if the comic has no strips.
