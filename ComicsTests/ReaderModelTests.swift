@@ -184,6 +184,35 @@ final class ReaderModelTests: XCTestCase {
         guard case .ready = model.strips[1] else { return XCTFail("strip 1 not ready after retry") }
     }
 
+    func testFailedJumpOffersNoBackTarget() async throws {
+        let model = makeModel(Self.narrow)
+        try await db.queue.write { try $0.execute(sql: "DROP TABLE jump") }
+        model.go(to: 5)
+        XCTAssertNil(model.backTarget, "no history row was written, so there is nowhere to go back to")
+    }
+
+    func testMissingImageReloadsOnceThenFails() async {
+        let model = makeModel(Self.narrow)
+        await waitUntil("strip 1") { settled(model, [1]) }
+        model.imageMissing(1)
+        XCTAssertEqual(model.strips[1], .loading, "the first missing file triggers a reload")
+        await waitUntil("strip 1 reloaded") { settled(model, [1]) }
+        guard case .ready = model.strips[1] else { return XCTFail("strip 1 not ready after reload") }
+        model.imageMissing(1)
+        XCTAssertEqual(model.strips[1], .failed(canRetry: true), "a second miss shows the failure card, no loop")
+    }
+
+    func testManualRetryStillWorksAfterAutomaticRetry() async {
+        let model = makeModel(Self.narrow)
+        await waitUntil("strip 1") { settled(model, [1]) }
+        model.imageMissing(1)
+        await waitUntil("strip 1 reloaded") { settled(model, [1]) }
+        model.imageMissing(1)
+        model.retry(1)
+        await waitUntil("strip 1 after retry") { settled(model, [1]) }
+        guard case .ready = model.strips[1] else { return XCTFail("strip 1 not ready after manual retry") }
+    }
+
     func testFailedBookmarkWriteShowsWarning() async throws {
         let model = makeModel(Self.narrow)
         try await db.queue.write { try $0.execute(sql: "DROP TABLE jump") }

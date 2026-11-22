@@ -44,6 +44,8 @@ final class ReaderModel {
     @ObservationIgnored private let loader: StripLoader
     @ObservationIgnored private var tasks: [Int: Task<Void, Never>] = [:]
     @ObservationIgnored private var warningTask: Task<Void, Never>?
+    /// Strips already reloaded once because their image file was missing.
+    @ObservationIgnored private var autoRetried: Set<Int> = []
 
     init(def: ComicDef, library: LibraryStore, places: PlaceKeeper, loader: StripLoader) {
         self.def = def
@@ -100,10 +102,10 @@ final class ReaderModel {
         guard count > 0 else { return }
         let target = min(max(ordinal, 1), count)
         guard target != first else { return }
-        let old = first
         places.jump(def.id, to: target)
         first = target
-        backTarget = old
+        // From the stored history, so a failed write cannot offer a place that was never saved.
+        backTarget = places.history(def.id).first?.ordinal
         moved()
     }
 
@@ -116,9 +118,14 @@ final class ReaderModel {
         moved()
     }
 
-    /// Forgets the strip's stored details and cached image and loads it again.
+    /// Forgets the strip's stored details, cached image and decoded image, and loads it again.
     func retry(_ ordinal: Int) {
         tasks[ordinal]?.cancel()
+        if case .ready(let strip) = strips[ordinal] {
+            // A reload can land at the same file path; drop the old decoded pixels.
+            DecodedImages.shared.remove(strip.image)
+            if let bonus = strip.bonus { DecodedImages.shared.remove(bonus) }
+        }
         strips[ordinal] = .loading
         let def = def
         let loader = loader
@@ -129,9 +136,14 @@ final class ReaderModel {
         }
     }
 
-    /// The view found a ready strip's cached image file gone (the cache evicted it): load it again.
+    /// The view found a ready strip's cached image file gone (the cache evicted it): load it again,
+    /// once per strip. If the file is still missing after that, show the failure card rather than loop.
     func imageMissing(_ ordinal: Int) {
         guard tasks[ordinal] == nil else { return }
+        guard autoRetried.insert(ordinal).inserted else {
+            strips[ordinal] = .failed(canRetry: true)
+            return
+        }
         retry(ordinal)
     }
 

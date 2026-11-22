@@ -136,4 +136,19 @@ final class ReaderUITests: XCTestCase {
         assertShows(app, "back-chip")
         shot("wide-latest-with-chip")
     }
+
+    func testWideMenuOffersOriginalForBothStrips() {
+        let app = launch(canvas: Self.wide)
+        assertShows(app, "strip-1")
+        assertShows(app, "strip-2")
+        tapZone(app, "reader-middle")
+        let menu = app.buttons["reader-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: Self.timeout), "chrome did not show")
+        menu.tap()
+        XCTAssertTrue(app.buttons["Open original page #1"].waitForExistence(timeout: Self.timeout))
+        XCTAssertTrue(app.buttons["Open original page #2"].exists)
+        XCTAssertTrue(app.buttons["Reload strip #1"].exists)
+        XCTAssertTrue(app.buttons["Reload strip #2"].exists)
+        shot("wide-menu")
+    }
 }

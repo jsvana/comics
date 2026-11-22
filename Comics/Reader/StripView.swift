@@ -218,6 +218,11 @@ final class DecodedImages: @unchecked Sendable {
         if case .image(let image) = result { cache.setObject(image, forKey: file as NSURL) }
         return result
     }
+
+    /// Forgets the decoded image for `file`, so the next request decodes the file afresh.
+    func remove(_ file: URL) {
+        cache.removeObject(forKey: file as NSURL)
+    }
 }
 
 /// A cached image file, decoded off the main thread. A missing file (evicted from the cache) is

@@ -142,12 +142,15 @@ struct ReaderView: View {
                     }
                 }
             }
+            // One item per strip on screen, so the second strip of a spread can be opened too.
             Section {
-                if let page = model.originalPage(model.first) {
-                    Button("Open original page", systemImage: "safari") { openURL(page) }
+                ForEach(model.spread, id: \.self) { ordinal in
+                    if let page = model.originalPage(ordinal) {
+                        Button("Open original page #\(ordinal)", systemImage: "safari") { openURL(page) }
+                    }
                 }
-                Button("Reload this strip", systemImage: "arrow.clockwise") {
-                    model.spread.forEach(model.retry)
+                ForEach(model.spread, id: \.self) { ordinal in
+                    Button("Reload strip #\(ordinal)", systemImage: "arrow.clockwise") { model.retry(ordinal) }
                 }
             }
         } label: {
