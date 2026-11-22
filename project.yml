@@ -28,6 +28,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jsvana.comics
         INFOPLIST_FILE: Comics/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Comics/Resources/Comics.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
   ComicsTests:
     type: bundle.unit-test

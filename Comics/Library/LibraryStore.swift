@@ -27,6 +27,9 @@ final class LibraryStore: @unchecked Sendable {
     @ObservationIgnored private let db: Database
     @ObservationIgnored private let index: IndexFetcher
     @ObservationIgnored private let now: () -> Date
+    /// Called with the comic id after `add` and `remove` commit, on the calling thread. Set once
+    /// before use (the cloud mirror does this at start-up).
+    @ObservationIgnored var onChange: ((String) -> Void)?
 
     init(db: Database, index: IndexFetcher, now: @escaping () -> Date = Date.init) {
         self.db = db
@@ -74,6 +77,7 @@ final class LibraryStore: @unchecked Sendable {
             }
         }
         changed()
+        onChange?(id)
     }
 
     /// Hides the comic. Its strips and bookmark are kept for 30 days.
@@ -83,6 +87,7 @@ final class LibraryStore: @unchecked Sendable {
             try dbc.execute(sql: "UPDATE comic SET removedAt = ? WHERE id = ? AND removedAt IS NULL", arguments: [stamp, id])
         }
         changed()
+        onChange?(id)
     }
 
     /// Deletes comics removed more than 30 days ago, with their strips, bookmark and jumps.
