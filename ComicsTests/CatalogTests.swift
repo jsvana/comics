@@ -11,10 +11,10 @@ final class CatalogTests: XCTestCase {
         try JSONDecoder().decode(Catalog.self, from: bundledData())
     }
 
-    func testDecodesFiveComicsInOrder() throws {
+    func testDecodesFourComicsInOrder() throws {
         let catalog = try bundledCatalog()
         XCTAssertEqual(catalog.schema, Catalog.supportedSchema)
-        XCTAssertEqual(catalog.comics.map(\.id), ["xkcd", "qc", "doa", "smbc", "pbf"])
+        XCTAssertEqual(catalog.comics.map(\.id), ["xkcd", "qc", "doa", "pbf"])
     }
 
     func testIndexKinds() throws {
@@ -22,8 +22,8 @@ final class CatalogTests: XCTestCase {
         guard case .numbered(let n) = comics["xkcd"]?.index else { return XCTFail("xkcd not numbered") }
         XCTAssertEqual(n.skip, [404])
         guard case .wordpress = comics["doa"]?.index else { return XCTFail("doa not wordpress") }
-        guard case .linkList(let l) = comics["smbc"]?.index else { return XCTFail("smbc not linkList") }
-        XCTAssertFalse(l.newestFirst)
+        guard case .linkList(let l) = comics["pbf"]?.index else { return XCTFail("pbf not linkList") }
+        XCTAssertTrue(l.newestFirst)
     }
 
     func testEveryPatternCompiles() throws {

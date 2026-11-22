@@ -14,7 +14,9 @@
         "latestURL": "https://xkcd.com/info.0.json",
         "latestPattern": "\"num\":\\s*(?<n>\\d+)",
         "first": 1,
-        "skip": [404]
+        "skip": [
+          404
+        ]
       },
       "strip": {
         "kind": "json",
@@ -61,28 +63,6 @@
         "url": "{page}",
         "imagePattern": "<div id=\"comic\"[^>]*>(?:(?!</div>).)*?<img[^>]*src=\"(?<v>[^\"]*wp-content/uploads/[^\"]+)\"",
         "hoverPattern": "<div id=\"comic\"[^>]*>(?:(?!</div>).)*?<img[^>]*alt=\"(?<v>[^\"]*)\""
-      }
-    },
-    {
-      "id": "smbc",
-      "title": "Saturday Morning Breakfast Cereal",
-      "author": "Zach Weinersmith",
-      "home": "https://www.smbc-comics.com/",
-      "about": "Science, philosophy and jokes, with a bonus panel after the comic.",
-      "shape": "mixed",
-      "index": {
-        "kind": "linkList",
-        "url": "https://www.smbc-comics.com/comic/archive",
-        "itemPattern": "<option value=\"(?<key>comic/[^\"]+)\">(?<title>[^<]*)",
-        "pageTemplate": "https://www.smbc-comics.com/{key}",
-        "newestFirst": false
-      },
-      "strip": {
-        "kind": "html",
-        "url": "{page}",
-        "imagePattern": "<img[^>]*src=\"(?<v>[^\"]+)\"[^>]*id=\"cc-comic\"",
-        "hoverPattern": "<img[^>]*title=\"(?<v>[^\"]*)\"[^>]*id=\"cc-comic\"",
-        "bonusPattern": "<div id=\"aftercomic\"[^>]*><img[^>]*src=['\"](?<v>[^'\"]+)['\"]"
       }
     },
     {

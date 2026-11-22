@@ -116,7 +116,6 @@ final class StubHTTPTests: XCTestCase {
     func testFixturesLookLikeTheRealPages() throws {
         func text(_ name: String) -> String { String(decoding: StubHTTP.fixture(name), as: UTF8.self) }
         XCTAssertEqual(text("qc-100.html").components(separatedBy: "id=\"strip\"").count - 1, 1)
-        XCTAssertGreaterThan(text("smbc-archive.html").components(separatedBy: "<option").count - 1, 7000)
         XCTAssertEqual(StubHTTP.fixture("smbc-strip.webp").prefix(4), Data("RIFF".utf8))
         XCTAssertGreaterThan(Int(text("doa-total.txt").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0, 1000)
     }

@@ -1,9 +1,9 @@
 #!/bin/bash
 # Saves real site pages into ComicsTests/Fixtures for offline parser tests.
 # Fetched pages are data only; nothing from them is executed.
-# Uses the generic client name from HTTPClientIdentity. smbc-comics.com answers that name
-# with HTTP 500, so SMBC pages are fetched with $SMBC_UA instead (a plain browser-style
-# string you supply); without it the SMBC page fetches are skipped.
+# Uses the generic client name from HTTPClientIdentity.
+# smbc-strip.webp is kept as a generic WebP sample; SMBC is not in the catalog (its site
+# refuses the generic client name), so its pages are no longer fetched.
 set -euo pipefail
 
 UA="Comics/1.0"
@@ -31,16 +31,6 @@ grep -i '^x-wp-total:' "$OUT/doa-headers.tmp" | tr -d '\r' | awk '{print $2}' > 
 rm "$OUT/doa-headers.tmp"
 DOA_LINK="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["link"])' "$OUT/doa-page1.json")"
 fetch "$UA" "$DOA_LINK" doa-strip.html
-
-if [ -n "${SMBC_UA:-}" ]; then
-  fetch "$SMBC_UA" "https://www.smbc-comics.com/comic/archive" smbc-archive.html
-  fetch "$SMBC_UA" "https://www.smbc-comics.com/" smbc-strip.html
-fi
-# The strip image host accepts the generic client name.
-if [ -f "$OUT/smbc-strip.html" ]; then
-  SMBC_IMG="$(grep -o '<img[^>]*id="cc-comic"' "$OUT/smbc-strip.html" | grep -o 'src="[^"]*"' | head -1 | sed 's/^src="//; s/"$//')"
-  fetch "$UA" "$SMBC_IMG" smbc-strip.webp
-fi
 
 fetch "$UA" "https://pbfcomics.com/comics/" pbf-archive.html
 # The archive lists newest first (checked 2026-11-22), so the oldest comic is the last link.
