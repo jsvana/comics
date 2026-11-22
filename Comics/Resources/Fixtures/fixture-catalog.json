@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "version": 1,
+  "comics": [
+    {
+      "id": "fixture",
+      "title": "Fixture",
+      "author": "Comics test suite",
+      "home": "https://fixture.invalid/",
+      "about": "Twelve offline strips for tests: a tall one (5), a missing image (7) and a bonus panel (3).",
+      "shape": "portrait",
+      "index": {
+        "kind": "numbered",
+        "latestURL": "https://fixture.invalid/latest.txt",
+        "latestPattern": "(?<n>\\d+)",
+        "first": 1,
+        "skip": []
+      },
+      "strip": {
+        "kind": "html",
+        "url": "https://fixture.invalid/strips/{key}.html",
+        "imagePattern": "<img id=\"strip\" src=\"(?<v>[^\"]+)\"",
+        "titlePattern": "<h1>(?<v>[^<]+)</h1>",
+        "hoverPattern": "<img id=\"strip\" [^>]*title=\"(?<v>[^\"]+)\"",
+        "bonusPattern": "<img id=\"bonus\" src=\"(?<v>[^\"]+)\""
+      }
+    }
+  ]
+}

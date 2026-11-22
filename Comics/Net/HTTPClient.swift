@@ -82,3 +82,28 @@ actor PoliteHTTPClient: HTTPFetching {
         }
     }
 }
+
+/// Serves `https://fixture.invalid/<path>` from a folder (the app's bundled `Fixtures`), for the
+/// `-fixtureCatalog YES` test mode and reader tests. Never touches the network; anything else is a 404.
+struct FixtureHTTP: HTTPFetching {
+    static let host = "fixture.invalid"
+
+    let root: URL
+
+    init(root: URL) { self.root = root }
+
+    /// The `Fixtures` folder bundled with the app, or nil if this build has none.
+    static func bundled() -> FixtureHTTP? {
+        Bundle.main.url(forResource: "Fixtures", withExtension: nil).map(FixtureHTTP.init(root:))
+    }
+
+    func get(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard url.host?.lowercased() == Self.host, !path.isEmpty, !path.split(separator: "/").contains("..") else {
+            throw HTTPError.status(404)
+        }
+        guard let data = try? Data(contentsOf: root.appendingPathComponent(path)) else { throw HTTPError.status(404) }
+        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+        return (data, response)
+    }
+}

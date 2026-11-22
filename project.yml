@@ -20,6 +20,11 @@ targets:
     platform: iOS
     sources:
       - path: Comics
+        excludes:
+          - Resources/Fixtures
+      - path: Comics/Resources/Fixtures
+        type: folder
+        buildPhase: resources
       - path: catalog/catalog.json
         buildPhase: resources
     dependencies:
