@@ -1,7 +1,7 @@
-# Gutter: a webcomic reader for the iPhone Duo
+# Comics: a webcomic reader for the iPhone Duo
 
-Design, 2026-11-22. "Gutter" (the gap between comic panels) is a working name
-and Claude's call; Jay can rename it.
+Design, 2026-11-22. Approved by Jay the same day. The app is called
+"Comics" (Jay's choice).
 
 ## Intent
 
@@ -57,8 +57,8 @@ Fellowship (PBF), Saturday Morning Breakfast Cereal (SMBC).
 ## Constraints
 
 - Sibling of Quire, Powerplot and the crosswords fork: SwiftUI, xcodegen,
-  iOS 18 deployment target, team `7UE4RDLUSX`, bundle `com.jsvana.gutter`,
-  lives in `~/projects/gutter`.
+  iOS 18 deployment target, team `7UE4RDLUSX`, bundle `com.jsvana.comics`,
+  lives in `~/projects/comics`.
 - Layout follows the live window size, never the device model or orientation
   (same rule as `WindowForm` in Powerplot).
 - No Duo simulator runtime works on the Mac mini. Test with a `-canvas WxH`
@@ -119,8 +119,8 @@ The app ships with a bundled catalog and, on launch, fetches the remote copy
 It adopts the remote copy only if it parses and its version is not lower.
 A catalog it does not understand (higher schema version) is ignored.
 
-Remote location: a raw file URL, stored as a setting with a default. Where the
-file is hosted is an open question for Jay (see end).
+Remote location: a raw file URL, stored as a setting with a default (see
+"Catalog hosting").
 
 Launch catalog: the five comics above. Candidates for later, once each is
 checked: Dinosaur Comics, Order of the Stick, Wondermark, Poorly Drawn Lines,
@@ -287,10 +287,9 @@ up, re-fetchable). iCloud key-value store for the mirror described above.
   page, chrome stays out of the way, light and dark both supported.
 - Request pacing numbers, cache eviction details.
 
-## Open question for Jay
+## Catalog hosting (decided by Jay)
 
-Where the remote catalog file lives. It has to be readable without a login.
-Options: make the `gutter` GitHub repo public and read the raw file; keep the
-repo private and publish only the catalog (a public gist or the `website`
-repo); or serve it from blackpearl. Until this is settled the app runs on its
-bundled catalog.
+The GitHub repo `jsvana/comics` is public and the app reads the catalog from
+the raw file on `main` (`catalog/catalog.json`). The same file is the bundled
+fallback. The repo holds no secrets; signing keys and team credentials stay
+outside it as with the sibling apps.
