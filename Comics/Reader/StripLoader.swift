@@ -5,6 +5,8 @@ import GRDB
 struct LoadedStrip: Equatable {
     let ordinal: Int
     let details: StripDetails
+    /// A file in the image cache. The cache may evict it later, so a consumer that finds it missing
+    /// must treat that as "reload" (`StripLoader.reload`), not as a failure.
     let image: URL
     let bonus: URL?
     let pixelSize: CGSize
@@ -124,9 +126,15 @@ actor StripLoader {
 
     private func perform(_ def: ComicDef, _ ordinal: Int) async -> StripState {
         let id = def.id
-        guard let row = try? await db.queue.read({ try StripRow.fetchOne($0, key: ["comicId": id, "ordinal": ordinal]) }) else {
+        let stored: StripRow?
+        do {
+            stored = try await db.queue.read { try StripRow.fetchOne($0, key: ["comicId": id, "ordinal": ordinal]) }
+        } catch {
+            // GRDB's async read throws CancellationError on a cancelled task; that is not a failure.
+            if error is CancellationError || Task.isCancelled { return .loading }
             return .failed(canRetry: false)
         }
+        guard let row = stored else { return .failed(canRetry: false) }
         var extracted = false
         var details: StripDetails
         if let ref = row.image, let image = URL(string: ref) {
@@ -158,13 +166,18 @@ actor StripLoader {
         var bonus: URL?
         if let bonusURL = details.bonus { bonus = try? await images.file(for: bonusURL, comic: id) }
         if Task.isCancelled { return .loading }
-        try? await db.queue.write { dbc in
-            try dbc.execute(sql: "UPDATE strip SET pixelWidth = ?, pixelHeight = ? WHERE comicId = ? AND ordinal = ?",
-                            arguments: [Int(size.width), Int(size.height), id, ordinal])
-        }
+        storeSize(size, id: id, ordinal: ordinal)
         lastTransportFailed = false
         if extracted { recordSuccess(id) }
         return .ready(LoadedStrip(ordinal: ordinal, details: details, image: file, bonus: bonus, pixelSize: size))
+    }
+
+    /// Synchronous so a cancellation arriving now cannot skip the write.
+    private func storeSize(_ size: CGSize, id: String, ordinal: Int) {
+        try? db.queue.write { dbc in
+            try dbc.execute(sql: "UPDATE strip SET pixelWidth = ?, pixelHeight = ? WHERE comicId = ? AND ordinal = ?",
+                            arguments: [Int(size.width), Int(size.height), id, ordinal])
+        }
     }
 
     private func store(_ details: StripDetails, id: String, ordinal: Int) {

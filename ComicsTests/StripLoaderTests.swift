@@ -194,4 +194,73 @@ final class StripLoaderTests: XCTestCase {
         let state = await loader.load(def, ordinal: 99)
         XCTAssertEqual(state, .failed(canRetry: false))
     }
+
+    // MARK: Cancellation and offline
+
+    func testPrepareCancelsOutOfWindowWorkWithoutFailureOrBroken() async throws {
+        for n in 1...40 { serveStrip(n) }
+        http.hold { $0.path.hasSuffix(".json") }
+        let loader = makeLoader()
+        await loader.prepare(def, around: 10)
+        await waitUntil("first request") { !http.requested.isEmpty }
+        await loader.prepare(def, around: 30)  // 11...20 are now outside 25...50
+        http.release()
+        await waitUntil("31...40") { detailRequests().isSuperset(of: Set(31...40)) }
+        try await Task.sleep(for: .milliseconds(300))
+        let broken = await loader.isBroken("num")
+        XCTAssertFalse(broken)
+        // A cancelled strip was never recorded as failed: loading it now succeeds and still extracts.
+        let state = await loader.load(def, ordinal: 12)
+        guard case .ready = state else { return XCTFail("expected ready, got \(state)") }
+    }
+
+    func testCancelledWorkDoesNotCountTowardBroken() async throws {
+        for n in 1...3 { serveNoImage(n) }
+        http.hold { $0.path.hasSuffix(".json") }
+        let loader = makeLoader()
+        await loader.prepare(def, around: 0)  // 1...10
+        await waitUntil("requests") { !http.requested.isEmpty }
+        await loader.prepare(def, around: 100)  // cancels all of it
+        http.release()
+        try await Task.sleep(for: .milliseconds(300))
+        let broken = await loader.isBroken("num")
+        XCTAssertFalse(broken)
+        serveStrip(4); serveStrip(5)
+        _ = await loader.load(def, ordinal: 1)  // one noImage; a stale run would not matter, but must not reach 3
+        _ = await loader.load(def, ordinal: 2)
+        let stillFine = await loader.isBroken("num")
+        XCTAssertFalse(stillFine)
+    }
+
+    func testLoadJoiningCancelledJobRestartsAndIsReady() async throws {
+        for n in 1...40 { serveStrip(n) }
+        http.hold { $0.path == "/5.json" }
+        let loader = makeLoader()
+        await loader.prepare(def, around: 0)
+        await waitUntil("5.json requested") { detailRequests().contains(5) }
+        async let joined = loader.load(def, ordinal: 5)
+        try await Task.sleep(for: .milliseconds(50))
+        await loader.prepare(def, around: 30)  // cancels the job `load` joined
+        http.release()
+        let state = await joined
+        guard case .ready(let strip) = state else { return XCTFail("expected ready, got \(state)") }
+        XCTAssertEqual(strip.ordinal, 5)
+    }
+
+    func testTransportFailureSetsOfflineFlagAndSuccessClearsIt() async throws {
+        serveStrip(1)
+        http.failure = URLError(.notConnectedToInternet)
+        let loader = makeLoader()
+        let failed = await loader.load(def, ordinal: 1)
+        XCTAssertEqual(failed, .failed(canRetry: true))
+        var offline = await loader.lastTransportFailed
+        XCTAssertTrue(offline)
+        let broken = await loader.isBroken("num")
+        XCTAssertFalse(broken)
+        http.failure = nil
+        let state = await loader.load(def, ordinal: 1)
+        guard case .ready = state else { return XCTFail("expected ready, got \(state)") }
+        offline = await loader.lastTransportFailed
+        XCTAssertFalse(offline)
+    }
 }
