@@ -10,16 +10,28 @@ enum ProgressFile {
 
     /// Throws if `data` is not a progress file. For a comic already in the library the bookmark is
     /// moved with `jump`, so the old place lands in history; comics not in the library are added
-    /// like a restore. Comics not in the catalog, and entries marked removed, are skipped.
-    static func apply(_ data: Data, catalog: Catalog, library: LibraryStore, places: PlaceKeeper) async throws {
+    /// like a restore. Entries marked removed are skipped. Returns, in file order, the ids of comics
+    /// that could not be restored: not in the catalog, or their index could not be fetched.
+    @discardableResult
+    static func apply(_ data: Data, catalog: Catalog, library: LibraryStore, places: PlaceKeeper) async throws -> [String] {
         let list = try SavedPlace.decoder().decode([SavedPlace].self, from: data)
+        var failed: [String] = []
         for place in list {
-            guard let def = catalog.comics.first(where: { $0.id == place.comicID }) else { continue }
             if library.hasRow(place.comicID) {
                 if let target = place.resolvedOrdinal(library: library) { places.jump(place.comicID, to: target) }
-            } else if !place.removed {
-                try? await place.restoreAsNew(def, library: library, places: places)
+                continue
+            }
+            guard !place.removed else { continue }
+            guard let def = catalog.comics.first(where: { $0.id == place.comicID }) else {
+                failed.append(place.comicID)
+                continue
+            }
+            do {
+                try await place.restoreAsNew(def, library: library, places: places)
+            } catch {
+                failed.append(place.comicID)
             }
         }
+        return failed
     }
 }

@@ -38,6 +38,12 @@ actor ImageCache {
         return target
     }
 
+    /// The cached file for `url` if it is already on disk; never downloads. For library thumbnails.
+    func cachedFile(for url: URL, comic: String) -> URL? {
+        let target = location(for: url, comic: comic)
+        return FileManager.default.fileExists(atPath: target.path) ? target : nil
+    }
+
     /// Deletes the cached copy of `url`, if any.
     func remove(_ url: URL, comic: String) {
         try? FileManager.default.removeItem(at: location(for: url, comic: comic))

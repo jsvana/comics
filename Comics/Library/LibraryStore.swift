@@ -4,6 +4,23 @@ import Observation
 
 enum StartPoint { case first, latest }
 
+/// One library comic as the library screen shows it. `def` is the stored definition (nil only if
+/// it no longer decodes); `image` is the bookmarked strip's image URL once that strip has loaded.
+struct ComicSummary: Equatable, Sendable {
+    let id: String
+    let def: ComicDef?
+    let removed: Bool
+    let bookmark: Int
+    let count: Int
+    let baseCount: Int
+    let broken: Bool
+    let addedAt: Double
+    let lastReadAt: Double?
+    let image: URL?
+
+    var status: CardStatus { PlaceKeeper.status(bookmark: bookmark, count: count, baseCount: baseCount) }
+}
+
 enum LibraryError: Error, Equatable {
     /// `refresh` was called for a comic that was never added (or has been purged).
     case notInLibrary
@@ -65,6 +82,10 @@ final class LibraryStore: @unchecked Sendable {
             try row.save(dbc)
             if try Self.tail(id, dbc).count == known {  // else a concurrent refresh already appended
                 try Self.append(entries, to: id, expectingCount: known, dbc)
+            }
+            if row.baseCount == nil {
+                row.baseCount = try Self.tail(id, dbc).count
+                try row.update(dbc)
             }
             if row.bookmarkOrdinal == nil {
                 let (count, _) = try Self.tail(id, dbc)
@@ -145,7 +166,48 @@ final class LibraryStore: @unchecked Sendable {
         }
     }
 
+    /// Replaces the stored definition of every library comic (removed ones included) that is in
+    /// `catalog`. A comic that has left the catalog keeps reading from its stored definition.
+    func adoptDefinitions(from catalog: Catalog) async {
+        guard let encoded = try? catalog.comics.map({ ($0.id, try Self.encode($0)) }) else { return }
+        try? await db.queue.write { dbc in
+            for (id, json) in encoded {
+                try dbc.execute(sql: "UPDATE comic SET definition = ? WHERE id = ?", arguments: [json, id])
+            }
+        }
+        changed()
+    }
+
     // MARK: Queries
+
+    /// Everything a library card needs, for every row (removed ones included), in one read.
+    func summaries() -> [ComicSummary] {
+        let rows = (try? db.queue.read { dbc in
+            try Row.fetchAll(dbc, sql: """
+                SELECT c.id, c.definition, c.removedAt, c.bookmarkOrdinal, c.brokenSince, c.addedAt, c.lastReadAt, c.baseCount,
+                       (SELECT MAX(ordinal) FROM strip WHERE comicId = c.id) AS count,
+                       (SELECT image FROM strip WHERE comicId = c.id AND ordinal = c.bookmarkOrdinal) AS image
+                FROM comic c ORDER BY c.addedAt, c.id
+                """)
+        }) ?? []
+        return rows.map { row in
+            let json: String = row["definition"]
+            let image: String? = row["image"]
+            let removedAt: Double? = row["removedAt"]
+            let brokenSince: Double? = row["brokenSince"]
+            return ComicSummary(
+                id: row["id"],
+                def: try? JSONDecoder().decode(ComicDef.self, from: Data(json.utf8)),
+                removed: removedAt != nil,
+                bookmark: row["bookmarkOrdinal"] ?? 1,
+                count: row["count"] ?? 0,
+                baseCount: row["baseCount"] ?? 0,
+                broken: brokenSince != nil,
+                addedAt: row["addedAt"],
+                lastReadAt: row["lastReadAt"],
+                image: image.flatMap { URL(string: $0) })
+        }
+    }
 
     func count(_ id: String) -> Int {
         (try? db.queue.read { try Self.tail(id, $0).count }) ?? 0

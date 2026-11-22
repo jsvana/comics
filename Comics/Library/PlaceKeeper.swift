@@ -117,10 +117,23 @@ final class PlaceKeeper: @unchecked Sendable {
         }
     }
 
-    static func status(bookmark: Int, count: Int) -> CardStatus {
+    /// Records that the comic was opened, for the library's "most recently read" order. No `onChange`.
+    func markRead(_ comic: String) {
+        do {
+            try db.queue.write { dbc in
+                try dbc.execute(sql: "UPDATE comic SET lastReadAt = ? WHERE id = ?", arguments: [Date().timeIntervalSince1970, comic])
+            }
+        } catch {
+            Self.log.error("lastRead write failed for \(comic, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// "New" means strips that arrived after the comic was first indexed (`baseCount` strips), with
+    /// the bookmark past all of those and at most `newThreshold` to go; a backlog is never "new".
+    static func status(bookmark: Int, count: Int, baseCount: Int = 0) -> CardStatus {
         let remaining = count - bookmark
         if remaining <= 0 { return .caughtUp }
-        if remaining <= newThreshold { return .new(remaining) }
+        if remaining <= newThreshold && bookmark >= baseCount { return .new(remaining) }
         return .behind(at: bookmark, of: count)
     }
 
@@ -148,8 +161,8 @@ final class PlaceKeeper: @unchecked Sendable {
     private static func move(_ comic: String, to ordinal: Int, _ dbc: GRDB.Database) throws -> Int? {
         guard let strip = try resolve(comic, ordinal, dbc) else { return nil }
         try dbc.execute(
-            sql: "UPDATE comic SET bookmarkOrdinal = ?, bookmarkKey = ? WHERE id = ?",
-            arguments: [strip.ordinal, strip.key, comic])
+            sql: "UPDATE comic SET bookmarkOrdinal = ?, bookmarkKey = ?, lastReadAt = ? WHERE id = ?",
+            arguments: [strip.ordinal, strip.key, Date().timeIntervalSince1970, comic])
         return strip.ordinal
     }
 }

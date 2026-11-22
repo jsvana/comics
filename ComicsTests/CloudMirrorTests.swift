@@ -168,4 +168,24 @@ final class CloudMirrorTests: XCTestCase {
             XCTFail("expected a throw")
         } catch {}
     }
+
+    func testApplyReportsComicsThatCouldNotBeRestored() async throws {
+        let r = try rig()
+        let http = StubHTTP()  // every index request 404s
+        let db = try Comics.Database(path: nil)
+        let library = LibraryStore(db: db, index: IndexFetcher(http: http))
+        let places = PlaceKeeper(db: db)
+        let file = try SavedPlace.encoder().encode([
+            SavedPlace(comicID: "num", ordinal: 3, key: "3", history: [], removed: false),
+            SavedPlace(comicID: "gone", ordinal: 3, key: "3", history: [], removed: false),
+            SavedPlace(comicID: "old", ordinal: 3, key: "3", history: [], removed: true),
+        ])
+        let failed = try await ProgressFile.apply(file, catalog: catalog(def()), library: library, places: places)
+        XCTAssertEqual(failed, ["num", "gone"])
+        XCTAssertTrue(library.activeIDs().isEmpty)
+
+        let ok = try await ProgressFile.apply(file, catalog: catalog(def()), library: r.library, places: r.places)
+        XCTAssertEqual(ok, ["gone"])
+        XCTAssertEqual(r.places.bookmark("num"), 3)
+    }
 }

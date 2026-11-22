@@ -11,7 +11,7 @@ struct ComicsApp: App {
                 // Duo's inner-screen size (no Duo simulator runtime exists).
                 RootView(environment: environment)
                     .frame(width: canvas.width, height: canvas.height)
-                    .border(Color.red)
+                    .debugCanvasBorder()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 RootView(environment: environment)
@@ -20,36 +20,85 @@ struct ComicsApp: App {
     }
 }
 
-/// Reads the window size it is given and derives the layout form from it. Shows the reader when
-/// a comic is open (`-openComic <id>` opens one at launch).
+private extension View {
+    /// Outlines the `-canvas` frame in debug builds only.
+    @ViewBuilder
+    func debugCanvasBorder() -> some View {
+        #if DEBUG
+        border(Color.red)
+        #else
+        self
+        #endif
+    }
+}
+
+/// Reads the window size it is given and derives the layout form from it. Shows the library, or
+/// the reader when a comic is open (`-openComic <id>` opens one at launch). Each time the app
+/// becomes active it runs the launch upkeep (`AppEnvironment.becameActive`).
 struct RootView: View {
     let environment: AppEnvironment
+    @State private var library: LibraryModel
     @State private var reader: ReaderModel?
     @State private var openError: String?
+    @State private var offline = false
+    @State private var upkeepRunning = false
+    @Environment(\.scenePhase) private var scenePhase
+
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        _library = State(initialValue: LibraryModel(env: environment))
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let form = WindowForm(size: proxy.size)
-            if let reader {
-                ReaderView(model: reader) { self.reader = nil }
-            } else {
-                VStack(spacing: 12) {
-                    Text("Comics")
-                        .font(.largeTitle)
-                    if let openError {
-                        Text(openError)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .accessibilityIdentifier("open-error")
-                    }
+            Group {
+                if let reader {
+                    ReaderView(model: reader, offline: offline) { self.reader = nil }
+                } else {
+                    LibraryView(model: library, form: form, offline: offline, onOpen: open)
                 }
-                .padding()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("windowForm-\(form == .wide ? "wide" : "narrow")")
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("windowForm-\(form == .wide ? "wide" : "narrow")")
+        }
+        .alert("Couldn't open the comic", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(openError ?? "")
         }
         .task { await openFromLaunchArgs() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await upkeep()
+        }
+        .task(id: scenePhase) { await watchConnection() }
+    }
+
+    private func open(_ card: ComicSummary) {
+        guard let def = card.def else { return }
+        let places = environment.places
+        Task.detached { places.markRead(def.id) }
+        reader = ReaderModel(def: def, library: environment.library, places: places, loader: environment.loader)
+    }
+
+    private func upkeep() async {
+        guard !upkeepRunning else { return }
+        upkeepRunning = true
+        defer { upkeepRunning = false }
+        await environment.becameActive()
+        await library.reload()
+    }
+
+    /// Mirrors the loader's "last request failed for want of a connection" into the offline banner
+    /// while the app is active.
+    private func watchConnection() async {
+        guard scenePhase == .active else { return }
+        while !Task.isCancelled {
+            let failed = await environment.loader.lastTransportFailed
+            if failed != offline { offline = failed }
+            try? await Task.sleep(for: .seconds(2))
+        }
     }
 
     /// `-openComic <id>`: adds the comic (from its first strip) if it is not in the library, applies
@@ -59,7 +108,7 @@ struct RootView: View {
         let library = environment.library
         let places = environment.places
         do {
-            let catalog = try await environment.loadCatalog()
+            let catalog = environment.catalog.catalog
             let (stored, active) = await Task.detached { (library.definition(id), library.activeIDs().contains(id)) }.value
             guard let def = stored ?? catalog.comics.first(where: { $0.id == id }) else {
                 openError = "There is no comic called “\(id)”."
@@ -71,6 +120,7 @@ struct RootView: View {
                     await Task.detached { places.step(id, to: goto) }.value
                 }
             }
+            await Task.detached { places.markRead(id) }.value
             reader = ReaderModel(def: def, library: library, places: places, loader: environment.loader)
         } catch {
             openError = "Couldn't open \(id): \(error.localizedDescription)"

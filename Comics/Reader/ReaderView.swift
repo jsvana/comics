@@ -5,6 +5,8 @@ import UIKit
 /// ⋯ menu, the "Back to #N" chip and the save warning.
 struct ReaderView: View {
     let model: ReaderModel
+    /// Shows a quiet "Offline" capsule while strips cannot be fetched.
+    var offline = false
     let onClose: () -> Void
 
     @State private var chrome = false
@@ -204,6 +206,16 @@ struct ReaderView: View {
                     .allowsHitTesting(false)
                     .accessibilityIdentifier("save-warning")
                     .transition(.move(edge: .top).combined(with: .opacity))
+            } else if offline {
+                Label("Offline", systemImage: "wifi.slash")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, chrome ? 64 : 12)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("offline-banner")
             }
             Spacer(minLength: 0)
             if let target = model.backTarget {

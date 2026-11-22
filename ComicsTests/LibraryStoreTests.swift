@@ -198,4 +198,57 @@ final class LibraryStoreTests: XCTestCase {
             XCTAssertEqual(error as? LibraryError, .notInLibrary)
         }
     }
+
+    func testAddRecordsBaseCountOnce() async throws {
+        let http = StubHTTP(); serve(http, latest, "{\"num\": 5}")
+        let (store, db, _) = try makeStore(http)
+        try await store.add(numberedDef(), start: .first, progress: nil)
+        XCTAssertEqual(try comicRow(db, "num").baseCount, 5)
+        serve(http, latest, "{\"num\": 8}")
+        try await store.refresh(numberedDef())
+        XCTAssertEqual(try comicRow(db, "num").baseCount, 5)
+        store.remove("num")
+        try await store.add(numberedDef(), start: .first, progress: nil)  // restored within 30 days
+        XCTAssertEqual(try comicRow(db, "num").baseCount, 5)
+    }
+
+    func testSummaries() async throws {
+        let http = StubHTTP(); serve(http, latest, "{\"num\": 5}")
+        serve(http, "https://stub.test/archive", "<a href=\"/a\"><a href=\"/b\">")
+        let (store, db, _) = try makeStore(http)
+        try await store.add(numberedDef(), start: .first, progress: nil)
+        try await store.add(linkListDef(), start: .latest, progress: nil)
+        try await db.queue.write {
+            try $0.execute(sql: "UPDATE strip SET image = 'https://stub.test/1.png' WHERE comicId = 'num' AND ordinal = 1")
+            try $0.execute(sql: "UPDATE comic SET brokenSince = 1 WHERE id = 'links'")
+        }
+        store.remove("links")
+        let all = Dictionary(uniqueKeysWithValues: store.summaries().map { ($0.id, $0) })
+        let num = try XCTUnwrap(all["num"])
+        XCTAssertEqual(num.def, numberedDef())
+        XCTAssertEqual(num.count, 5)
+        XCTAssertEqual(num.bookmark, 1)
+        XCTAssertEqual(num.baseCount, 5)
+        XCTAssertEqual(num.image, URL(string: "https://stub.test/1.png"))
+        XCTAssertFalse(num.broken)
+        XCTAssertFalse(num.removed)
+        let links = try XCTUnwrap(all["links"])
+        XCTAssertEqual(links.bookmark, 2)
+        XCTAssertNil(links.image)
+        XCTAssertTrue(links.broken)
+        XCTAssertTrue(links.removed)
+    }
+
+    func testAdoptDefinitionsUpdatesOnlyComicsInCatalog() async throws {
+        let http = StubHTTP(); serve(http, latest, "{\"num\": 5}")
+        serve(http, "https://stub.test/archive", "<a href=\"/a\">")
+        let (store, _, _) = try makeStore(http)
+        try await store.add(numberedDef(), start: .first, progress: nil)
+        try await store.add(linkListDef(), start: .first, progress: nil)
+        let renamed = ComicDef(id: "num", title: "Renamed", author: "B", home: URL(string: "https://stub.test/")!, about: "new",
+                               shape: .portrait, index: numberedDef().index, strip: numberedDef().strip)
+        await store.adoptDefinitions(from: Catalog(schema: 1, version: 2, comics: [renamed]))
+        XCTAssertEqual(store.definition("num"), renamed)
+        XCTAssertEqual(store.definition("links"), linkListDef(), "a comic that left the catalog keeps its stored definition")
+    }
 }

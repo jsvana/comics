@@ -15,6 +15,10 @@ struct ComicRow: Codable, FetchableRecord, PersistableRecord, Equatable {
     var bookmarkKey: String?
     var lastRefreshed: Double?
     var brokenSince: Double?
+    /// When the reader last opened the comic or moved its bookmark (library sort order).
+    var lastReadAt: Double?
+    /// Strips in the index when the comic was first added; only strips after these count as "new".
+    var baseCount: Int?
 }
 
 /// One strip. `ordinal` is 1-based, assigned once on insert and never renumbered.
@@ -109,6 +113,12 @@ final class Database: @unchecked Sendable {
                 t.column("ordinal", .integer).notNull()
                 t.column("key", .text).notNull()
                 t.column("at", .double).notNull()
+            }
+        }
+        m.registerMigration("v2") { db in
+            try db.alter(table: "comic") { t in
+                t.add(column: "lastReadAt", .double)
+                t.add(column: "baseCount", .integer)
             }
         }
         return m

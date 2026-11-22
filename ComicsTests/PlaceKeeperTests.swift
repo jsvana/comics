@@ -147,4 +147,25 @@ final class PlaceKeeperTests: XCTestCase {
         XCTAssertNil(keeper.back("c"))
         XCTAssertEqual(keeper.history("c").map(\.ordinal), [10])
     }
+
+    func testStatusCountsOnlyStripsAfterTheFirstIndexAsNew() {
+        // Added from the first strip of a 12-strip comic: the backlog is not "new".
+        XCTAssertEqual(PlaceKeeper.status(bookmark: 1, count: 12, baseCount: 12), .behind(at: 1, of: 12))
+        XCTAssertEqual(PlaceKeeper.status(bookmark: 11, count: 12, baseCount: 12), .behind(at: 11, of: 12))
+        XCTAssertEqual(PlaceKeeper.status(bookmark: 12, count: 12, baseCount: 12), .caughtUp)
+        // Caught up, then three arrived.
+        XCTAssertEqual(PlaceKeeper.status(bookmark: 12, count: 15, baseCount: 12), .new(3))
+        XCTAssertEqual(PlaceKeeper.status(bookmark: 5962, count: 5965, baseCount: 0), .new(3))
+    }
+
+    func testMovesRecordLastRead() throws {
+        let (keeper, db) = try make()
+        XCTAssertNil(try row(db).lastReadAt)
+        keeper.step("c", to: 2141)
+        let first = try XCTUnwrap(try row(db).lastReadAt)
+        XCTAssertEqual(first, Date().timeIntervalSince1970, accuracy: 5)
+        try db.queue.write { try $0.execute(sql: "UPDATE comic SET lastReadAt = 1") }
+        keeper.markRead("c")
+        XCTAssertEqual(try XCTUnwrap(try row(db).lastReadAt), Date().timeIntervalSince1970, accuracy: 5)
+    }
 }
