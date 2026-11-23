@@ -100,6 +100,7 @@ struct RootView: View {
         defer { upkeepRunning = false }
         await environment.becameActive()
         await library.reload()
+        reader?.libraryChanged()  // upkeep may have appended strips to the open comic
     }
 
     /// Mirrors the loader's "last request failed for want of a connection" into the offline banner

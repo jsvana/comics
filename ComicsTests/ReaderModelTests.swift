@@ -176,6 +176,44 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.first, 10, "next then previous returns to the same strip")
     }
 
+    // MARK: New strips while reading
+
+    func testNewStripBecomesReachableWhenTheLibraryChanges() async throws {
+        let model = try makeModel(Self.narrow)
+        model.go(to: 12)
+        await waitUntil("strip 12") { settled(model, [12]) }
+        XCTAssertTrue(model.atEnd)
+        model.next()
+        XCTAssertEqual(model.first, 12)
+        http.latest = 13
+        let added = try await library.refresh(def)
+        XCTAssertEqual(added, 1)
+        await waitUntil("the model sees 13 strips") { model.count == 13 }
+        XCTAssertFalse(model.atEnd, "the caught-up card gives way")
+        await waitUntil("strip 13 tried") { settled(model, [13]) }
+        model.next()
+        XCTAssertEqual(model.first, 13)
+        XCTAssertEqual(places.bookmark(def.id), 13)
+        XCTAssertTrue(model.atEnd)
+    }
+
+    func testLibraryChangedOnActivationRereadsTheCount() async throws {
+        let model = try makeModel(Self.wide)
+        model.go(to: 11)
+        await waitUntil("side by side 11-12") { model.layout == .sideBySide }
+        // Another store over the same database appends a strip without this model's store noticing,
+        // as an upkeep pass the model did not observe would.
+        http.latest = 14
+        let other = LibraryStore(db: db, index: IndexFetcher(http: http))
+        _ = try await other.refresh(def)
+        XCTAssertEqual(model.count, 12)
+        model.libraryChanged()
+        XCTAssertEqual(model.count, 14)
+        XCTAssertFalse(model.atEnd)
+        model.next()
+        XCTAssertEqual(model.first, 13, "the final pair is no longer final: a normal move by two")
+    }
+
     // MARK: Unreadable bookmark
 
     func testReaderRefusesToOpenWhenTheBookmarkCannotBeRead() async throws {

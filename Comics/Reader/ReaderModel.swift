@@ -64,6 +64,7 @@ final class ReaderModel {
             Task { @MainActor in self?.showSaveWarning() }
         }
         moved()
+        observeLibrary()
     }
 
     /// The strips on screen, in order.
@@ -179,7 +180,30 @@ final class ReaderModel {
         return URL(string: template.replacingOccurrences(of: "{key}", with: entry.key))
     }
 
+    /// Re-reads the strip count (upkeep may have appended strips) and, if it changed, lays out and
+    /// loads around the bookmark again, so a new strip after the last one becomes reachable. Runs
+    /// on every library change and when the app becomes active. Never moves the bookmark.
+    func libraryChanged() {
+        let latest = library.count(def.id)
+        guard latest != count else { return }
+        count = latest
+        moved()
+    }
+
     // MARK: Internals
+
+    /// Calls `libraryChanged` after each change to the library's revision, for as long as the model lives.
+    private func observeLibrary() {
+        withObservationTracking {
+            _ = library.revision
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                libraryChanged()
+                observeLibrary()
+            }
+        }
+    }
 
     private func moved() {
         relayout()
