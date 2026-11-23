@@ -11,17 +11,16 @@ final class CatalogTests: XCTestCase {
         try JSONDecoder().decode(Catalog.self, from: bundledData())
     }
 
-    func testDecodesFourComicsInOrder() throws {
+    func testDecodesThreeComicsInOrder() throws {
         let catalog = try bundledCatalog()
         XCTAssertEqual(catalog.schema, Catalog.supportedSchema)
-        XCTAssertEqual(catalog.comics.map(\.id), ["xkcd", "qc", "doa", "pbf"])
+        XCTAssertEqual(catalog.comics.map(\.id), ["xkcd", "qc", "pbf"])
     }
 
     func testIndexKinds() throws {
         let comics = Dictionary(uniqueKeysWithValues: try bundledCatalog().comics.map { ($0.id, $0) })
         guard case .numbered(let n) = comics["xkcd"]?.index else { return XCTFail("xkcd not numbered") }
         XCTAssertEqual(n.skip, [404])
-        guard case .wordpress = comics["doa"]?.index else { return XCTFail("doa not wordpress") }
         guard case .linkList(let l) = comics["pbf"]?.index else { return XCTFail("pbf not linkList") }
         XCTAssertTrue(l.newestFirst)
     }
@@ -46,7 +45,7 @@ final class CatalogTests: XCTestCase {
 
     func testUnknownKindFailsWholeCatalog() throws {
         var json = try XCTUnwrap(String(data: bundledData(), encoding: .utf8))
-        json = json.replacingOccurrences(of: "\"kind\": \"wordpress\"", with: "\"kind\": \"mystery\"")
+        json = json.replacingOccurrences(of: "\"kind\": \"linkList\"", with: "\"kind\": \"mystery\"")
         XCTAssertThrowsError(try JSONDecoder().decode(Catalog.self, from: Data(json.utf8))) { error in
             XCTAssertTrue(error is DecodingError, "\(error)")
         }

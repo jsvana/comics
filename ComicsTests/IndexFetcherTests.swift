@@ -23,7 +23,11 @@ final class PatternTests: XCTestCase {
 }
 
 final class IndexFetcherTests: XCTestCase {
+    /// A comic from the bundled catalog, or the saved Dumbing of Age definition (`doa-comic.json`):
+    /// its site refuses the app's client name for images, so it left the catalog, but the
+    /// WordPress index recipe keeps its offline tests.
     private func comic(_ id: String) throws -> ComicDef {
+        if id == "doa" { return try JSONDecoder().decode(ComicDef.self, from: StubHTTP.fixture("doa-comic.json")) }
         let url = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))
         let catalog = try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: url))
         return try XCTUnwrap(catalog.comics.first { $0.id == id })

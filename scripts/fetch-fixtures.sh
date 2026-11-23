@@ -3,6 +3,8 @@
 # Fetched pages are data only; nothing from them is executed.
 # Uses the generic client name from HTTPClientIdentity.
 # curl -f makes any non-2xx response a hard failure instead of saving an error page.
+# The doa-* fixtures and doa-comic.json back the offline WordPress-index tests; Dumbing of Age is
+# no longer in the catalog (its image host refuses the generic client name).
 # smbc-strip.webp is kept as a generic WebP sample; SMBC is not in the catalog (its site
 # refuses the generic client name), so its pages are no longer fetched.
 set -euo pipefail

@@ -2,7 +2,10 @@ import XCTest
 @testable import Comics
 
 final class StripExtractorTests: XCTestCase {
+    /// A strip recipe from the bundled catalog, or the saved Dumbing of Age definition
+    /// (`doa-comic.json`), which left the catalog because its image host refuses the app's client name.
     private func recipe(_ id: String) throws -> StripRecipe {
+        if id == "doa" { return try JSONDecoder().decode(ComicDef.self, from: StubHTTP.fixture("doa-comic.json")).strip }
         let url = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))
         let catalog = try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: url))
         return try XCTUnwrap(catalog.comics.first { $0.id == id }).strip

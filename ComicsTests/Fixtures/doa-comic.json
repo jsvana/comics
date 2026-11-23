@@ -1,0 +1,18 @@
+{
+  "id": "doa",
+  "title": "Dumbing of Age",
+  "author": "David Willis",
+  "home": "https://www.dumbingofage.com/",
+  "about": "College comedy and drama starring a cast of misfits.",
+  "shape": "wide",
+  "index": {
+    "kind": "wordpress",
+    "api": "https://www.dumbingofage.com/wp-json/wp/v2/comic"
+  },
+  "strip": {
+    "kind": "html",
+    "url": "{page}",
+    "imagePattern": "<div id=\"comic\"[^>]*>(?:(?!</div>).)*?<img[^>]*src=\"(?<v>[^\"]*wp-content/uploads/[^\"]+)\"",
+    "hoverPattern": "<div id=\"comic\"[^>]*>(?:(?!</div>).)*?<img[^>]*alt=\"(?<v>[^\"]*)\""
+  }
+}
