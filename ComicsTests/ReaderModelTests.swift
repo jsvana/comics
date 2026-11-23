@@ -214,6 +214,34 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.first, 13, "the final pair is no longer final: a normal move by two")
     }
 
+    // MARK: Failed strips
+
+    func testFailedStripIsRetriedOnceWhenItComesOnScreen() async throws {
+        http.offline = true
+        let model = try makeModel(Self.narrow)
+        await waitUntil("strips 1 and 2 failed") {
+            model.strips[1] == .failed(canRetry: true) && model.strips[2] == .failed(canRetry: true)
+        }
+        http.offline = false
+        model.next()
+        await waitUntil("strip 2 loaded without a Retry tap") {
+            if case .ready = model.strips[2] { return true } else { return false }
+        }
+        XCTAssertEqual(model.strips[1], .failed(canRetry: true), "only strips coming on screen are retried")
+        model.previous()
+        await waitUntil("strip 1 loaded") {
+            if case .ready = model.strips[1] { return true } else { return false }
+        }
+    }
+
+    func testStripThatKeepsFailingIsNotRetriedInALoop() async throws {
+        let model = try makeModel(Self.narrow)
+        model.go(to: 7)
+        await waitUntil("strip 7") { settled(model, [7]) }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.strips[7], .failed(canRetry: true))
+    }
+
     // MARK: Unreadable bookmark
 
     func testReaderRefusesToOpenWhenTheBookmarkCannotBeRead() async throws {

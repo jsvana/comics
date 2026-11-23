@@ -49,6 +49,9 @@ final class ReaderModel {
     /// Where the reader was when `next()` stepped from the final pair onto the last strip alone, so
     /// `previous()` can go back to that pair. Cleared by every other move.
     @ObservationIgnored private var endStepFrom: Int?
+    /// The strips on screen after the last move; a failed strip gets one automatic retry when it
+    /// comes on screen, not again while it stays there.
+    @ObservationIgnored private var onScreen: Set<Int> = []
 
     /// Throws if the comic's bookmark cannot be read: opening at strip 1 instead and paging once
     /// would overwrite the real place.
@@ -236,6 +239,13 @@ final class ReaderModel {
         }
         for n in strips.keys where !keep.contains(n) { strips[n] = nil }
         for n in entries.keys where !keep.contains(n) { entries[n] = nil }
+
+        // A strip that failed (say, during a network blip) gets one more try when it comes on screen.
+        let shown = Set(spread)
+        for n in shown.subtracting(onScreen) where tasks[n] == nil && strips[n] == .failed(canRetry: true) {
+            strips[n] = nil
+        }
+        onScreen = shown
 
         guard count > 0 else { return }
         let low = max(1, first - Self.loadBehind)
