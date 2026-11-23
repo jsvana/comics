@@ -91,6 +91,22 @@ final class ReaderUITests: XCTestCase {
         shot("narrow-chrome-hints")
     }
 
+    func testWideFinishingOnAPairMovesTheBookmarkToTheLastStrip() {
+        let app = launch(canvas: Self.wide, extra: ["-goto", "11"])
+        assertShows(app, "strip-11")
+        assertShows(app, "strip-12")
+        tapZone(app, "reader-next")
+        XCTAssertTrue(element(app, "strip-11").waitForNonExistence(timeout: Self.timeout), "the last strip is shown alone")
+        assertShows(app, "strip-12")
+        assertShows(app, "caught-up")
+        shot("wide-finished-12")
+        app.terminate()
+
+        let again = launch(canvas: Self.wide, reset: false)
+        assertShows(again, "strip-12")
+        XCTAssertFalse(element(again, "strip-11").exists, "the saved place is the last strip")
+    }
+
     func testTallStripScrollsBeforeAdvancing() {
         let app = launch(canvas: Self.narrow, extra: ["-goto", "5"])
         assertShows(app, "strip-5")

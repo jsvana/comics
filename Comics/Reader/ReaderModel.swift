@@ -216,6 +216,24 @@ final class ReaderModel {
         let loader = loader
         let around = first
         Task { await loader.prepare(def, around: around) }
+        warmImages()
+    }
+
+    /// How many strips past the bookmark are decoded ahead of time, so a page turn shows at once.
+    private static let decodeAhead = 4
+
+    /// Decodes the strips on screen and the next few into memory, off the main thread.
+    private func warmImages() {
+        guard count > 0 else { return }
+        for n in first...min(count, first + Self.decodeAhead) { warm(n) }
+    }
+
+    private func warm(_ ordinal: Int) {
+        guard case .ready(let strip) = strips[ordinal] else { return }
+        let files = [strip.image] + (strip.bonus.map { [$0] } ?? [])
+        for file in files where DecodedImages.shared.cached(file) == nil {
+            Task.detached(priority: .utility) { _ = await DecodedImages.shared.image(file) }
+        }
     }
 
     private func size(_ ordinal: Int) -> CGSize? {
@@ -281,6 +299,7 @@ final class ReaderModel {
         tasks[ordinal] = nil
         strips[ordinal] = state
         if ordinal == first || ordinal == first + 1 { relayout() }
+        if (first...(first + Self.decodeAhead)).contains(ordinal) { warm(ordinal) }
     }
 
     private func showSaveWarning() {

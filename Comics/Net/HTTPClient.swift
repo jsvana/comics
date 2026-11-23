@@ -13,6 +13,35 @@ enum HTTPClientIdentity {
     static let userAgent = "Comics/1.0"
 }
 
+/// Hosts the catalog marks as sending real pages under an error status.
+enum LenientHosts {
+    private static let lock = NSLock()
+    private static var hosts: Set<String> = []
+
+    static func configure(from comics: [ComicDef]) {
+        let all = Set(comics.flatMap { $0.lenientHosts ?? [] }.map { $0.lowercased() })
+        let browser = Set(comics.flatMap { $0.browserHosts ?? [] }.map { $0.lowercased() })
+        lock.lock(); defer { lock.unlock() }
+        hosts = all
+        browserHosts = browser
+    }
+
+    private static var browserHosts: Set<String> = []
+    /// Sent to hosts the catalog lists under `browserHosts`.
+    static let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 "
+        + "(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+    static func userAgent(for host: String) -> String {
+        lock.lock(); defer { lock.unlock() }
+        return browserHosts.contains(host) ? browserUserAgent : HTTPClientIdentity.userAgent
+    }
+
+    static func contains(_ host: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return hosts.contains(host)
+    }
+}
+
 /// Fetches pages one at a time per host, leaving a gap between consecutive requests to the same host.
 actor PoliteHTTPClient: HTTPFetching {
     private struct HostState {
@@ -49,10 +78,13 @@ actor PoliteHTTPClient: HTTPFetching {
 
     private func perform(_ url: URL) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
-        request.setValue(HTTPClientIdentity.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(LenientHosts.userAgent(for: url.host?.lowercased() ?? ""), forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw HTTPError.notHTTP }
-        guard (200..<300).contains(http.statusCode) else { throw HTTPError.status(http.statusCode) }
+        // A lenient host sends the real page under a 5xx status; take the body when there is one.
+        let tolerated = LenientHosts.contains(url.host?.lowercased() ?? "")
+            && (500..<600).contains(http.statusCode) && !data.isEmpty
+        guard (200..<300).contains(http.statusCode) || tolerated else { throw HTTPError.status(http.statusCode) }
         return (data, http)
     }
 

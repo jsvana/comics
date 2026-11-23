@@ -20,6 +20,9 @@ struct ReaderView: View {
 
     var body: some View {
         GeometryReader { geo in
+            // Closed Duo: the cover screen leaves a column beside the strip, under the camera.
+            // When it is there, every control lives in it and no bars cover the strip.
+            let rail = WindowForm(size: geo.size) == .narrow && geo.safeAreaInsets.trailing >= Self.railMinInset
             ZStack {
                 ReaderScroller(
                     content: SpreadContent(model: model, viewport: geo.size),
@@ -29,9 +32,11 @@ struct ReaderView: View {
                     safeArea: geo.safeAreaInsets,
                     chromeVisible: chrome,
                     onAction: handle)
-                tapZones(TapZones.frames(for: model.form, canvas: geo.size, safeArea: geo.safeAreaInsets))
-                if chrome { chromeBars }
+                tapZones(TapZones.frames(for: model.form, canvas: geo.size, safeArea: geo.safeAreaInsets), hints: !rail)
+                if !(chrome && !rail) { progressBar }
+                if chrome && !rail { chromeBars }
                 overlays
+                if rail { sideRail(width: geo.safeAreaInsets.trailing) }
             }
             .onAppear {
                 apply(geo.size)
@@ -83,12 +88,12 @@ struct ReaderView: View {
     /// Accessibility handles for the three tap areas (placed by `TapZones`), and in the narrow form
     /// the fading hints. They do not take touches themselves (the strip's scroll view does, so it
     /// can scroll and zoom, and routes taps through `TapZones`); VoiceOver activates them directly.
-    private func tapZones(_ frames: TapZones.Frames) -> some View {
+    private func tapZones(_ frames: TapZones.Frames, hints showHints: Bool) -> some View {
         ZStack(alignment: .topLeading) {
             zone("reader-middle", "Show controls", frames.toggleChrome) { handle(.toggleChrome) }
             zone("reader-prev", "Previous", frames.previous) { handle(.previous) }
             zone("reader-next", "Next", frames.next) { handle(.next) }
-            if model.form == .narrow {
+            if model.form == .narrow && showHints {
                 hint("chevron.left", frames.previous)
                 hint("chevron.right", frames.next)
             }
@@ -130,6 +135,93 @@ struct ReaderView: View {
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.6)) { hints = false }
         }
+    }
+
+    // MARK: Side rail (closed Duo)
+
+    /// The trailing safe-area inset at or above which the controls move into it.
+    private static let railMinInset: CGFloat = 60
+    /// Room left clear at the top of the rail for the camera.
+    private static let railTopClearance: CGFloat = 96
+
+    /// All of the reader's controls in the column beside the strip: library, menu, a vertical
+    /// scrubber, the position, and previous / next under the thumb.
+    private func sideRail(width: CGFloat) -> some View {
+        let shown = Int((scrub ?? Double(model.first)).rounded())
+        return Color.clear.overlay(alignment: .trailing) {
+            VStack(spacing: 12) {
+                Button(action: onClose) {
+                    Image(systemName: "house.fill")
+                        .font(.title3)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Library")
+                .accessibilityIdentifier("reader-library")
+                menu
+                if model.count > 1 {
+                    GeometryReader { box in
+                        scrubber
+                            .frame(width: box.size.height)
+                            .rotationEffect(.degrees(90))
+                            .position(x: box.size.width / 2, y: box.size.height / 2)
+                    }
+                } else {
+                    Spacer(minLength: 0)
+                }
+                Button {
+                    numberText = ""
+                    askNumber = true
+                } label: {
+                    VStack(spacing: 1) {
+                        Text("\(shown)").font(.footnote.weight(.semibold))
+                        Text("of \(model.count)").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("reader-position")
+                railButton("chevron.left", "Previous", "rail-prev", height: 64) { handle(.previous) }
+                railButton("chevron.right", "Next", "rail-next", height: 120) { handle(.next) }
+            }
+            .padding(.top, Self.railTopClearance)
+            .padding(.bottom, 24)
+            .padding(.horizontal, 8)
+            .frame(width: width)
+            .frame(maxHeight: .infinity)
+            .background(Color(.secondarySystemBackground))
+        }
+        .ignoresSafeArea(.container, edges: [.trailing, .top, .bottom])
+    }
+
+    private func railButton(_ symbol: String, _ label: String, _ id: String, height: CGFloat,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.title2.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: height)
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
+    }
+
+    private var scrubber: some View {
+        Slider(
+            value: Binding(get: { scrub ?? Double(model.first) }, set: { scrub = $0 }),
+            in: 1...Double(max(model.count, 2)), step: 1
+        ) { editing in
+            if !editing, let target = scrub {
+                scrub = nil
+                model.go(to: Int(target.rounded()))
+            }
+        }
+        .accessibilityIdentifier("reader-scrubber")
     }
 
     // MARK: Chrome
@@ -213,16 +305,7 @@ struct ReaderView: View {
         let shown = Int((scrub ?? Double(model.first)).rounded())
         return HStack(spacing: 14) {
             if model.count > 1 {
-                Slider(
-                    value: Binding(get: { scrub ?? Double(model.first) }, set: { scrub = $0 }),
-                    in: 1...Double(model.count), step: 1
-                ) { editing in
-                    if !editing, let target = scrub {
-                        scrub = nil
-                        model.go(to: Int(target.rounded()))
-                    }
-                }
-                .accessibilityIdentifier("reader-scrubber")
+                scrubber
             } else {
                 Spacer()
             }
@@ -235,6 +318,40 @@ struct ReaderView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
         .background(.bar, ignoresSafeAreaEdges: .bottom)
+    }
+
+    // MARK: Progress
+
+    /// A thin always-visible line along the bottom edge: how far through the comic the reader is.
+    private var progressBar: some View {
+        let last = min(model.count, (model.spread.last ?? model.first))
+        let fraction = model.count > 0 ? CGFloat(last) / CGFloat(model.count) : 0
+        return VStack(alignment: .trailing, spacing: 2) {
+            Spacer(minLength: 0)
+            Text((Double(fraction) * 100).formatted(.number.precision(.fractionLength(1))) + "%")
+                .font(.caption2.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.trailing, 6)
+                .accessibilityHidden(true)
+            GeometryReader { bar in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.primary.opacity(0.12))
+                    Rectangle().fill(Color.accentColor)
+                        .frame(width: max(bar.size.width * fraction, 2))
+                }
+            }
+            .frame(height: 3)
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.2), value: model.first)
+        .accessibilityElement()
+        .accessibilityLabel("Progress")
+        .accessibilityValue("\(last) of \(model.count), \(Int((Double(fraction) * 100).rounded())) percent")
+        .accessibilityIdentifier("reader-progress")
     }
 
     // MARK: Chip and warning
@@ -392,6 +509,7 @@ private struct ReaderScroller<Content: View>: UIViewControllerRepresentable {
         controller.safeArea = safeArea
         controller.setContent(AnyView(content))
         if controller.resetKey != resetKey || controller.viewport != viewport {
+            if let old = controller.resetKey, old != resetKey { controller.pageChanged(from: old, to: resetKey) }
             controller.resetKey = resetKey
             controller.viewport = viewport
             controller.resetPosition()
@@ -438,7 +556,7 @@ final class ReaderScrollController: UIViewController, UIScrollViewDelegate, UIGe
         scroll.addSubview(hosting.view)
         hosting.didMove(toParent: self)
 
-        for direction in [UISwipeGestureRecognizer.Direction.left, .right] {
+        for direction in [UISwipeGestureRecognizer.Direction.left, .right, .up, .down] {
             let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swiped(_:)))
             swipe.direction = direction
             swipe.delegate = self
@@ -457,6 +575,34 @@ final class ReaderScrollController: UIViewController, UIScrollViewDelegate, UIGe
                 .onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in self?.contentSizeChanged(size) }
                 .contentShape(Rectangle())
                 .gesture(SpatialTapGesture().onEnded { [weak self] value in self?.tapped(at: value.location) }))
+    }
+
+    /// The direction of the swipe that asked for the page turn now in progress, if it was a swipe.
+    private var lastSwipe: UISwipeGestureRecognizer.Direction?
+    private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+    /// Animates the change of spread and taps the haptic engine. A step slides the way the reader
+    /// moved (sideways, or up and down after a vertical swipe); a jump cross-fades.
+    func pageChanged(from old: Int, to new: Int) {
+        let swipe = lastSwipe
+        lastSwipe = nil
+        let transition = CATransition()
+        transition.duration = 0.22
+        transition.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        if abs(new - old) > 2 || UIAccessibility.isReduceMotionEnabled {
+            transition.type = .fade
+        } else {
+            transition.type = .push
+            let forward = new > old
+            switch swipe {
+            // Core Animation names these for a flipped layer: `.fromTop` brings the page up from below.
+            case .some(.up), .some(.down): transition.subtype = forward ? .fromTop : .fromBottom
+            default: transition.subtype = forward ? .fromRight : .fromLeft
+            }
+        }
+        scroll.layer.add(transition, forKey: "page")
+        haptic.impactOccurred()
+        haptic.prepare()
     }
 
     func resetPosition() {
@@ -549,12 +695,22 @@ final class ReaderScrollController: UIViewController, UIScrollViewDelegate, UIGe
     }
 
     @objc private func swiped(_ swipe: UISwipeGestureRecognizer) {
-        onAction(swipe.direction == .left ? .next : .previous)
+        lastSwipe = swipe.direction
+        onAction(swipe.direction == .left || swipe.direction == .up ? .next : .previous)
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Swipes turn pages only when not zoomed in; zoomed, a horizontal drag pans.
-        !(gestureRecognizer is UISwipeGestureRecognizer) || scroll.zoomScale <= 1.01
+        // Swipes turn pages only when not zoomed in; zoomed, a drag pans.
+        guard let swipe = gestureRecognizer as? UISwipeGestureRecognizer else { return true }
+        guard scroll.zoomScale <= 1.01 else { return false }
+        // Up and down turn pages on the open phone only, and only when there is nothing left to
+        // scroll that way, so a tall strip still scrolls first.
+        let bottom = max(scroll.contentSize.height - scroll.bounds.height, 0)
+        switch swipe.direction {
+        case .up: return form == .wide && scroll.contentOffset.y >= bottom - 2
+        case .down: return form == .wide && scroll.contentOffset.y <= 2
+        default: return true
+        }
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,

@@ -18,6 +18,10 @@ struct ComicDef: Codable, Equatable, Identifiable {
     let shape: Shape
     let index: IndexRecipe
     let strip: StripRecipe
+    /// Hosts that answer with an error status while still sending the real page.
+    var lenientHosts: [String]? = nil
+    /// Hosts that refuse the app's own client name; requests to them identify as a browser.
+    var browserHosts: [String]? = nil
 
     enum Shape: String, Codable {
         case portrait, wide, mixed

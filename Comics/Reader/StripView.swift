@@ -228,6 +228,9 @@ final class DecodedImages: @unchecked Sendable {
         return result
     }
 
+    /// The decoded image if it is already in memory; never decodes.
+    func cached(_ file: URL) -> CGImage? { cache.object(forKey: file as NSURL) }
+
     /// Forgets the decoded image for `file`, so the next request decodes the file afresh.
     func remove(_ file: URL) {
         cache.removeObject(forKey: file as NSURL)
@@ -240,7 +243,13 @@ private struct DecodedImage: View {
     let file: URL
     let label: String
     let onMissing: () -> Void
-    @State private var image: CGImage?
+    @State private var decoded: (file: URL, image: CGImage)?
+
+    /// A preloaded image shows at once, with no blank frame; never a previous strip's image.
+    private var image: CGImage? {
+        if let decoded, decoded.file == file { return decoded.image }
+        return DecodedImages.shared.cached(file)
+    }
 
     var body: some View {
         ZStack {
@@ -254,9 +263,9 @@ private struct DecodedImage: View {
         }
         .task(id: file) {
             switch await DecodedImages.shared.image(file) {
-            case .image(let decoded): image = decoded
-            case .missing: image = nil; onMissing()
-            case .undecodable: image = nil
+            case .image(let result): decoded = (file, result)
+            case .missing: decoded = nil; onMissing()
+            case .undecodable: decoded = nil
             }
         }
     }

@@ -73,7 +73,11 @@ struct AppEnvironment {
         loader = StripLoader(db: db, library: library, extractor: StripExtractor(http: http),
                              images: images, unmetered: { network?.unmetered ?? false })
         catalog = CatalogStore(bundled: bundledCatalog, http: http, storage: catalogDir, remote: remote)
-        catalog.onAdopt = { adopted in await library.adoptDefinitions(from: adopted) }
+        LenientHosts.configure(from: catalog.catalog.comics)
+        catalog.onAdopt = { adopted in
+            LenientHosts.configure(from: adopted.comics)
+            await library.adoptDefinitions(from: adopted)
+        }
     }
 
     static let current = AppEnvironment(launchArgs: LaunchArgs(CommandLine.arguments))
