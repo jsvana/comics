@@ -15,7 +15,7 @@
 	<key>UILaunchScreen</key><dict/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
-		<key>UIApplicationSupportsMultipleScenes</key><true/>
+		<key>UIApplicationSupportsMultipleScenes</key><false/>
 	</dict>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
