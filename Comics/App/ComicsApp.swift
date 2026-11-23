@@ -78,8 +78,18 @@ struct RootView: View {
     private func open(_ card: ComicSummary) {
         guard let def = card.def else { return }
         let places = environment.places
+        do {
+            reader = try ReaderModel(def: def, library: environment.library, places: places, loader: environment.loader)
+        } catch {
+            openError = Self.unreadablePlace(def.title)
+            return
+        }
         Task.detached { places.markRead(def.id) }
-        reader = ReaderModel(def: def, library: environment.library, places: places, loader: environment.loader)
+    }
+
+    /// Shown instead of opening the reader at strip 1 when the saved place cannot be read.
+    private static func unreadablePlace(_ title: String) -> String {
+        "Couldn't read your place in \(title), so the comic was not opened (opening it at the start could overwrite your place). Try again in a moment."
     }
 
     private func upkeep() async {
@@ -120,8 +130,12 @@ struct RootView: View {
                     await Task.detached { places.step(id, to: goto) }.value
                 }
             }
+            guard let model = try? ReaderModel(def: def, library: library, places: places, loader: environment.loader) else {
+                openError = Self.unreadablePlace(def.title)
+                return
+            }
             await Task.detached { places.markRead(id) }.value
-            reader = ReaderModel(def: def, library: library, places: places, loader: environment.loader)
+            reader = model
         } catch {
             openError = "Couldn't open \(id): \(error.localizedDescription)"
         }

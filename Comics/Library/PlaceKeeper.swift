@@ -37,13 +37,24 @@ final class PlaceKeeper: @unchecked Sendable {
 
     init(db: Database) { self.db = db }
 
-    /// The bookmarked ordinal, or 1 if the comic has none.
+    /// The bookmarked ordinal, or 1 if the comic has none. A read error also gives 1, so never use
+    /// this to decide where to write: use `savedBookmark`, which throws instead.
     func bookmark(_ comic: String) -> Int {
+        do {
+            return try savedBookmark(comic)
+        } catch {
+            return 1
+        }
+    }
+
+    /// The bookmarked ordinal, or 1 if the comic has none; throws if it cannot be read, so a caller
+    /// never mistakes an unreadable place for the start of the comic.
+    func savedBookmark(_ comic: String) throws -> Int {
         do {
             return try db.queue.read { try ComicRow.fetchOne($0, key: comic) }?.bookmarkOrdinal ?? 1
         } catch {
             Self.log.error("bookmark read failed for \(comic, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return 1
+            throw error
         }
     }
 

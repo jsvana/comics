@@ -12,13 +12,15 @@ final class ReaderModelTests: XCTestCase {
     private var places: PlaceKeeper!
     private var loader: StripLoader!
     private var def: ComicDef!
+    private var http: ScriptedFixtureHTTP!
 
     private static let narrow = CGSize(width: 466, height: 678)
     private static let wide = CGSize(width: 951, height: 669)
 
     override func setUp() async throws {
-        let http = try XCTUnwrap(FixtureHTTP.bundled(), "the app bundle has no Fixtures folder")
-        let data = try Data(contentsOf: http.root.appendingPathComponent("fixture-catalog.json"))
+        let fixture = try XCTUnwrap(FixtureHTTP.bundled(), "the app bundle has no Fixtures folder")
+        http = ScriptedFixtureHTTP(fixture)
+        let data = try Data(contentsOf: fixture.root.appendingPathComponent("fixture-catalog.json"))
         def = try XCTUnwrap(JSONDecoder().decode(Catalog.self, from: data).comics.first { $0.id == "fixture" })
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("readermodel-\(UUID().uuidString)")
         db = try Comics.Database(path: nil)
@@ -33,8 +35,8 @@ final class ReaderModelTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    private func makeModel(_ canvas: CGSize) -> ReaderModel {
-        let model = ReaderModel(def: def, library: library, places: places, loader: loader)
+    private func makeModel(_ canvas: CGSize) throws -> ReaderModel {
+        let model = try ReaderModel(def: def, library: library, places: places, loader: loader)
         model.canvas = canvas
         model.form = WindowForm(size: canvas)
         return model
@@ -55,14 +57,14 @@ final class ReaderModelTests: XCTestCase {
         }
     }
 
-    func testFixtureComicHasTwelveStrips() {
-        let model = makeModel(Self.narrow)
+    func testFixtureComicHasTwelveStrips() throws {
+        let model = try makeModel(Self.narrow)
         XCTAssertEqual(model.count, 12)
         XCTAssertEqual(model.first, 1)
     }
 
-    func testNarrowNextMovesOneAndWritesBookmark() async {
-        let model = makeModel(Self.narrow)
+    func testNarrowNextMovesOneAndWritesBookmark() async throws {
+        let model = try makeModel(Self.narrow)
         await waitUntil("strips 1 and 2") { settled(model, [1, 2]) }
         XCTAssertEqual(model.layout, .single)
         model.next()
@@ -70,16 +72,16 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(places.bookmark(def.id), 2)
     }
 
-    func testWideUsesSideBySideAndMovesByTwo() async {
-        let model = makeModel(Self.wide)
+    func testWideUsesSideBySideAndMovesByTwo() async throws {
+        let model = try makeModel(Self.wide)
         await waitUntil("side by side") { model.layout == .sideBySide }
         model.next()
         XCTAssertEqual(model.first, 3)
         XCTAssertEqual(places.bookmark(def.id), 3)
     }
 
-    func testWideNextThenPreviousReturnsToSameStrip() async {
-        let model = makeModel(Self.wide)
+    func testWideNextThenPreviousReturnsToSameStrip() async throws {
+        let model = try makeModel(Self.wide)
         await waitUntil("side by side") { model.layout == .sideBySide }
         model.next()
         await waitUntil("strips 3 and 4") { settled(model, [3, 4]) }
@@ -88,16 +90,16 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(places.bookmark(def.id), 1)
     }
 
-    func testWidePreviousOverSingleTallStripStepsOne() async {
-        let model = makeModel(Self.wide)
+    func testWidePreviousOverSingleTallStripStepsOne() async throws {
+        let model = try makeModel(Self.wide)
         model.go(to: 6)
         await waitUntil("strips 4 to 6") { settled(model, [4, 5, 6]) }
         model.previous()
         XCTAssertEqual(model.first, 5, "4 and 5 do not pair (5 is too tall), so the previous spread is 5 alone")
     }
 
-    func testGoToSetsBackTargetAndGoBackReturns() async {
-        let model = makeModel(Self.narrow)
+    func testGoToSetsBackTargetAndGoBackReturns() async throws {
+        let model = try makeModel(Self.narrow)
         model.go(to: 9)
         XCTAssertEqual(model.first, 9)
         XCTAssertEqual(model.backTarget, 1)
@@ -108,8 +110,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(places.bookmark(def.id), 1)
     }
 
-    func testNextClearsBackTarget() async {
-        let model = makeModel(Self.narrow)
+    func testNextClearsBackTarget() async throws {
+        let model = try makeModel(Self.narrow)
         model.go(to: 9)
         await waitUntil("strip 9") { settled(model, [9]) }
         model.next()
@@ -117,8 +119,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertNil(model.backTarget)
     }
 
-    func testNextAtLastStripDoesNothing() async {
-        let model = makeModel(Self.narrow)
+    func testNextAtLastStripDoesNothing() async throws {
+        let model = try makeModel(Self.narrow)
         model.go(to: 12)
         await waitUntil("strip 12") { settled(model, [12]) }
         XCTAssertTrue(model.atEnd)
@@ -127,8 +129,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(places.bookmark(def.id), 12)
     }
 
-    func testWideNextAtFinalPairDoesNothing() async {
-        let model = makeModel(Self.wide)
+    func testWideNextAtFinalPairDoesNothing() async throws {
+        let model = try makeModel(Self.wide)
         model.go(to: 11)
         await waitUntil("side by side 11-12") { model.layout == .sideBySide }
         XCTAssertTrue(model.atEnd)
@@ -136,8 +138,18 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.first, 11)
     }
 
-    func testFailedStripCanBePassed() async {
-        let model = makeModel(Self.narrow)
+    // MARK: Unreadable bookmark
+
+    func testReaderRefusesToOpenWhenTheBookmarkCannotBeRead() async throws {
+        places.step(def.id, to: 4)
+        try await db.queue.write { try $0.execute(sql: "ALTER TABLE comic RENAME TO comic_gone") }
+        XCTAssertThrowsError(try ReaderModel(def: def, library: library, places: places, loader: loader))
+        try await db.queue.write { try $0.execute(sql: "ALTER TABLE comic_gone RENAME TO comic") }
+        XCTAssertEqual(places.bookmark(def.id), 4, "nothing was written while it could not be read")
+    }
+
+    func testFailedStripCanBePassed() async throws {
+        let model = try makeModel(Self.narrow)
         model.go(to: 7)
         await waitUntil("strip 7") { settled(model, [7]) }
         XCTAssertEqual(model.strips[7], .failed(canRetry: true))
@@ -145,8 +157,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.first, 8)
     }
 
-    func testFormChangeKeepsFirst() async {
-        let model = makeModel(Self.narrow)
+    func testFormChangeKeepsFirst() async throws {
+        let model = try makeModel(Self.narrow)
         model.go(to: 4)
         await waitUntil("strips 4 and 5") { settled(model, [4, 5]) }
         model.canvas = Self.wide
@@ -156,8 +168,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.first, 4)
     }
 
-    func testTallStripIsSingleInWide() async {
-        let model = makeModel(Self.wide)
+    func testTallStripIsSingleInWide() async throws {
+        let model = try makeModel(Self.wide)
         model.go(to: 5)
         await waitUntil("strips 5 and 6") { settled(model, [5, 6]) }
         XCTAssertEqual(model.layout, .single)
@@ -165,8 +177,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.first, 6)
     }
 
-    func testBonusImageIsLoaded() async {
-        let model = makeModel(Self.narrow)
+    func testBonusImageIsLoaded() async throws {
+        let model = try makeModel(Self.narrow)
         model.go(to: 3)
         await waitUntil("strip 3") { settled(model, [3]) }
         guard case .ready(let strip) = model.strips[3] else { return XCTFail("strip 3 not ready") }
@@ -175,8 +187,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.entries[3]?.key, "3")
     }
 
-    func testRetryReloadsStrip() async {
-        let model = makeModel(Self.narrow)
+    func testRetryReloadsStrip() async throws {
+        let model = try makeModel(Self.narrow)
         await waitUntil("strip 1") { settled(model, [1]) }
         model.retry(1)
         XCTAssertEqual(model.strips[1], .loading)
@@ -185,14 +197,14 @@ final class ReaderModelTests: XCTestCase {
     }
 
     func testFailedJumpOffersNoBackTarget() async throws {
-        let model = makeModel(Self.narrow)
+        let model = try makeModel(Self.narrow)
         try await db.queue.write { try $0.execute(sql: "DROP TABLE jump") }
         model.go(to: 5)
         XCTAssertNil(model.backTarget, "no history row was written, so there is nowhere to go back to")
     }
 
-    func testMissingImageReloadsOnceThenFails() async {
-        let model = makeModel(Self.narrow)
+    func testMissingImageReloadsOnceThenFails() async throws {
+        let model = try makeModel(Self.narrow)
         await waitUntil("strip 1") { settled(model, [1]) }
         model.imageMissing(1)
         XCTAssertEqual(model.strips[1], .loading, "the first missing file triggers a reload")
@@ -202,8 +214,8 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.strips[1], .failed(canRetry: true), "a second miss shows the failure card, no loop")
     }
 
-    func testManualRetryStillWorksAfterAutomaticRetry() async {
-        let model = makeModel(Self.narrow)
+    func testManualRetryStillWorksAfterAutomaticRetry() async throws {
+        let model = try makeModel(Self.narrow)
         await waitUntil("strip 1") { settled(model, [1]) }
         model.imageMissing(1)
         await waitUntil("strip 1 reloaded") { settled(model, [1]) }
@@ -214,10 +226,39 @@ final class ReaderModelTests: XCTestCase {
     }
 
     func testFailedBookmarkWriteShowsWarning() async throws {
-        let model = makeModel(Self.narrow)
+        let model = try makeModel(Self.narrow)
         try await db.queue.write { try $0.execute(sql: "DROP TABLE jump") }
         model.go(to: 5)
         await waitUntil("save warning") { model.saveFailed }
+    }
+}
+
+/// The bundled fixture site, with a settable latest strip number (to simulate new strips) and an
+/// offline switch (every request fails as a transport error).
+final class ScriptedFixtureHTTP: HTTPFetching, @unchecked Sendable {
+    private let base: FixtureHTTP
+    private let lock = NSLock()
+    private var _latest: Int?
+    private var _offline = false
+
+    init(_ base: FixtureHTTP) { self.base = base }
+
+    var latest: Int? {
+        get { lock.withLock { _latest } }
+        set { lock.withLock { _latest = newValue } }
+    }
+
+    var offline: Bool {
+        get { lock.withLock { _offline } }
+        set { lock.withLock { _offline = newValue } }
+    }
+
+    func get(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+        if offline { throw URLError(.notConnectedToInternet) }
+        if url.lastPathComponent == "latest.txt", let latest {
+            return (Data("\(latest)".utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!)
+        }
+        return try await base.get(url)
     }
 }
 

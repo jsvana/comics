@@ -47,13 +47,15 @@ final class ReaderModel {
     /// Strips already reloaded once because their image file was missing.
     @ObservationIgnored private var autoRetried: Set<Int> = []
 
-    init(def: ComicDef, library: LibraryStore, places: PlaceKeeper, loader: StripLoader) {
+    /// Throws if the comic's bookmark cannot be read: opening at strip 1 instead and paging once
+    /// would overwrite the real place.
+    init(def: ComicDef, library: LibraryStore, places: PlaceKeeper, loader: StripLoader) throws {
         self.def = def
         self.library = library
         self.places = places
         self.loader = loader
+        first = try places.savedBookmark(def.id)
         count = library.count(def.id)
-        first = places.bookmark(def.id)
         history = places.history(def.id)
         places.onError = { [weak self] _ in
             Task { @MainActor in self?.showSaveWarning() }

@@ -168,4 +168,12 @@ final class PlaceKeeperTests: XCTestCase {
         keeper.markRead("c")
         XCTAssertEqual(try XCTUnwrap(try row(db).lastReadAt), Date().timeIntervalSince1970, accuracy: 5)
     }
+
+    func testSavedBookmarkThrowsWhenUnreadableInsteadOfSayingOne() throws {
+        let (keeper, db) = try make()
+        XCTAssertEqual(try keeper.savedBookmark("c"), 2140)
+        XCTAssertEqual(try keeper.savedBookmark("absent"), 1, "no row: the start of the comic")
+        try db.queue.write { try $0.execute(sql: "ALTER TABLE comic RENAME TO comic_gone") }
+        XCTAssertThrowsError(try keeper.savedBookmark("c"))
+    }
 }
