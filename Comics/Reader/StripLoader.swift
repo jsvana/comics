@@ -40,6 +40,10 @@ actor StripLoader {
     private var noImageRuns: [String: Int] = [:]
     /// Strips whose read-ahead failed; not retried by `prepare` until the reader asks for them.
     private var failedAhead: Set<Key> = []
+    /// Strips that finished ready, with their image file: `prepare` skips them while that file is
+    /// still in the cache, so a page turn does not redo the work for the whole window. Pruned to
+    /// the window like `failedAhead`; `reload` and a missing file (evicted) drop an entry.
+    private var completed: [Key: URL] = [:]
     private(set) var lastTransportFailed = false
 
     init(db: Database, library: LibraryStore, extractor: StripExtractor, images: ImageCache, unmetered: @escaping @Sendable () -> Bool) {
@@ -77,18 +81,29 @@ actor StripLoader {
             jobs[key] = nil
         }
         failedAhead = failedAhead.filter { $0.comic == def.id && window.contains($0.ordinal) }
+        completed = completed.filter { $0.key.comic == def.id && window.contains($0.key.ordinal) }
         let last = min(library.count(def.id), ordinal + ahead)
         guard ordinal < last else { return }
         for next in (ordinal + 1)...last {
             let key = Key(comic: def.id, ordinal: next)
-            if jobs[key] == nil && !failedAhead.contains(key) { _ = job(for: def, key: key) }
+            guard jobs[key] == nil, !failedAhead.contains(key), !isComplete(key) else { continue }
+            _ = job(for: def, key: key)
         }
+    }
+
+    /// True if `key` finished ready and its image file is still cached.
+    private func isComplete(_ key: Key) -> Bool {
+        guard let file = completed[key] else { return false }
+        if FileManager.default.fileExists(atPath: file.path) { return true }
+        completed[key] = nil
+        return false
     }
 
     /// Forgets stored details and the cached images for the strip, then loads it afresh.
     func reload(_ def: ComicDef, ordinal: Int) async -> StripState {
         let key = Key(comic: def.id, ordinal: ordinal)
         if let job = jobs.removeValue(forKey: key) { job.task.cancel() }
+        completed[key] = nil
         let row = try? await db.queue.read { try StripRow.fetchOne($0, key: ["comicId": def.id, "ordinal": ordinal]) }
         for ref in [row?.image, row?.bonus] {
             if let ref, let url = URL(string: ref) { await images.remove(url, comic: def.id) }
@@ -119,7 +134,11 @@ actor StripLoader {
 
     private func finish(_ key: Key, id: Int, state: StripState) {
         if jobs[key]?.id == id { jobs[key] = nil }
-        if case .failed = state { failedAhead.insert(key) }
+        switch state {
+        case .ready(let strip): completed[key] = strip.image
+        case .failed: failedAhead.insert(key); completed[key] = nil
+        case .loading: break
+        }
     }
 
     // MARK: Work
@@ -166,7 +185,9 @@ actor StripLoader {
         var bonus: URL?
         if let bonusURL = details.bonus { bonus = try? await images.file(for: bonusURL, comic: id) }
         if Task.isCancelled { return .loading }
-        storeSize(size, id: id, ordinal: ordinal)
+        if row.pixelWidth != Int(size.width) || row.pixelHeight != Int(size.height) {
+            storeSize(size, id: id, ordinal: ordinal)
+        }
         lastTransportFailed = false
         if extracted { recordSuccess(id) }
         return .ready(LoadedStrip(ordinal: ordinal, details: details, image: file, bonus: bonus, pixelSize: size))

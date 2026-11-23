@@ -263,4 +263,93 @@ final class StripLoaderTests: XCTestCase {
         offline = await loader.lastTransportFailed
         XCTAssertFalse(offline)
     }
+
+    // MARK: Finished strips
+
+    /// Counts committed transactions that changed the `strip` table until cancelled.
+    private func countStripWrites() async throws -> (Locked<Int>, AnyDatabaseCancellable) {
+        let writes = Locked(0)
+        let observation = DatabaseRegionObservation(tracking: Table("strip"))
+        let cancellable = observation.start(in: db.queue, onError: { _ in }, onChange: { _ in writes.mutate { $0 += 1 } })
+        try await db.queue.write { _ in }  // the observer is in place once this write has run
+        return (writes, cancellable)
+    }
+
+    private func sizesStored(_ range: ClosedRange<Int>) throws -> Bool {
+        let stored = try db.queue.read {
+            try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM strip WHERE comicId = 'num' AND ordinal BETWEEN ? AND ? AND pixelWidth IS NOT NULL",
+                             arguments: [range.lowerBound, range.upperBound])
+        }
+        return stored == range.count
+    }
+
+    /// Last-used stamps of the cached image files (the cache touches a file each time it serves it).
+    private func modificationDates() -> [String: Date] {
+        var dates: [String: Date] = [:]
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .isRegularFileKey]
+        let walker = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: Array(keys))
+        while let url = walker?.nextObject() as? URL {
+            guard let values = try? url.resourceValues(forKeys: keys), values.isRegularFile == true,
+                  let date = values.contentModificationDate else { continue }
+            dates[url.lastPathComponent] = date
+        }
+        return dates
+    }
+
+    func testLoadingAFinishedStripAgainWritesNothing() async throws {
+        serveStrip(1)
+        let loader = makeLoader()
+        _ = await loader.load(def, ordinal: 1)
+        let (writes, observation) = try await countStripWrites()
+        let again = await loader.load(def, ordinal: 1)
+        guard case .ready = again else { return XCTFail("expected ready, got \(again)") }
+        try await db.queue.write { _ in }
+        XCTAssertEqual(writes.value, 0, "the stored size was already right")
+        observation.cancel()
+    }
+
+    func testSecondPrepareSkipsFinishedStrips() async throws {
+        for n in 1...40 { serveStrip(n) }
+        let loader = makeLoader()
+        await loader.prepare(def, around: 10)
+        await waitUntil("11...20 finished") { (try? sizesStored(11...20)) == true }
+        try await Task.sleep(for: .milliseconds(200))  // let the jobs record that they finished
+        let dates = modificationDates()
+        let requests = http.requested.count
+        let (writes, observation) = try await countStripWrites()
+        await loader.prepare(def, around: 10)
+        await loader.prepare(def, around: 11)  // a page turn: only strip 21 is new
+        await waitUntil("21 finished") { (try? sizesStored(21...21)) == true }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(writes.value, 2, "strip 21 only: its extracted details, then its size")
+        XCTAssertEqual(http.requested.count, requests + 2, "21's details and image only")
+        let after = modificationDates()
+        for (name, date) in dates { XCTAssertEqual(after[name], date, "\(name) was touched again") }
+        observation.cancel()
+    }
+
+    func testPrepareRedoesAFinishedStripWhoseImageWasEvicted() async throws {
+        for n in 1...40 { serveStrip(n) }
+        let loader = makeLoader()
+        await loader.prepare(def, around: 10)
+        await waitUntil("11...20 finished") { (try? sizesStored(11...20)) == true }
+        try await Task.sleep(for: .milliseconds(200))
+        let cache = ImageCache(http: http, directory: dir)
+        let cached = await cache.cachedFile(for: URL(string: "https://img.test/15.png")!, comic: "num")
+        let file = try XCTUnwrap(cached)
+        try FileManager.default.removeItem(at: file)
+        await loader.prepare(def, around: 10)
+        await waitUntil("15.png fetched again") { http.requested.filter { $0.path == "/15.png" }.count == 2 }
+    }
+
+    func testReloadForgetsThatAStripFinished() async throws {
+        for n in 1...40 { serveStrip(n) }
+        let loader = makeLoader()
+        await loader.prepare(def, around: 10)
+        await waitUntil("11...20 finished") { (try? sizesStored(11...20)) == true }
+        try await Task.sleep(for: .milliseconds(200))
+        _ = await loader.reload(def, ordinal: 12)
+        XCTAssertEqual(http.requested.filter { $0.path == "/12.json" }.count, 2)
+        XCTAssertEqual(http.requested.filter { $0.path == "/12.png" }.count, 2)
+    }
 }
