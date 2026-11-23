@@ -129,13 +129,51 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(places.bookmark(def.id), 12)
     }
 
-    func testWideNextAtFinalPairDoesNothing() async throws {
+    func testWideNextAtFinalPairStepsToLastStrip() async throws {
         let model = try makeModel(Self.wide)
         model.go(to: 11)
         await waitUntil("side by side 11-12") { model.layout == .sideBySide }
         XCTAssertTrue(model.atEnd)
+        let history = places.history(def.id)
+        model.next()
+        XCTAssertEqual(model.first, 12, "the last strip was read, so the bookmark moves onto it")
+        XCTAssertEqual(places.bookmark(def.id), 12)
+        XCTAssertEqual(model.spread, [12])
+        XCTAssertTrue(model.atEnd)
+        XCTAssertNil(model.backTarget)
+        XCTAssertEqual(places.history(def.id), history, "a plain step: no history entry")
+        XCTAssertEqual(PlaceKeeper.status(bookmark: places.bookmark(def.id), count: model.count), .caughtUp)
+        model.next()
+        XCTAssertEqual(model.first, 12, "nothing further")
+        model.previous()
+        XCTAssertEqual(model.first, 11, "back to the final pair the reader came from")
+        XCTAssertEqual(places.bookmark(def.id), 11)
+        await waitUntil("side by side 11-12 again") { model.layout == .sideBySide }
+        XCTAssertEqual(model.spread, [11, 12])
+    }
+
+    func testWideReadingThroughEndingOnAPairIsCaughtUp() async throws {
+        let model = try makeModel(Self.wide)
+        model.go(to: 9)
+        await waitUntil("side by side 9-10") { model.layout == .sideBySide }
         model.next()
         XCTAssertEqual(model.first, 11)
+        await waitUntil("side by side 11-12") { model.layout == .sideBySide }
+        model.next()
+        XCTAssertEqual(model.first, 12)
+        XCTAssertEqual(places.bookmark(def.id), 12)
+        XCTAssertEqual(places.history(def.id).map(\.ordinal), [1], "only the go(to: 9) jump is in history")
+    }
+
+    func testPreviousFromEndReachedByAPlainNextUsesTheUsualRule() async throws {
+        let model = try makeModel(Self.wide)
+        model.go(to: 10)
+        await waitUntil("side by side 10-11") { model.layout == .sideBySide }
+        model.next()
+        XCTAssertEqual(model.first, 12)
+        await waitUntil("strips 10 to 12") { settled(model, [10, 11, 12]) }
+        model.previous()
+        XCTAssertEqual(model.first, 10, "next then previous returns to the same strip")
     }
 
     // MARK: Unreadable bookmark

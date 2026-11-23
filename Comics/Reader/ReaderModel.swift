@@ -46,6 +46,9 @@ final class ReaderModel {
     @ObservationIgnored private var warningTask: Task<Void, Never>?
     /// Strips already reloaded once because their image file was missing.
     @ObservationIgnored private var autoRetried: Set<Int> = []
+    /// Where the reader was when `next()` stepped from the final pair onto the last strip alone, so
+    /// `previous()` can go back to that pair. Cleared by every other move.
+    @ObservationIgnored private var endStepFrom: Int?
 
     /// Throws if the comic's bookmark cannot be read: opening at strip 1 instead and paging once
     /// would overwrite the real place.
@@ -75,12 +78,20 @@ final class ReaderModel {
 
     // MARK: Moves
 
-    /// Advances by the spread on screen. At the end this does nothing.
+    /// Advances by the spread on screen. When the final pair is on screen (the last strip has been
+    /// read), steps onto the last strip alone so the bookmark says caught up. At the last strip
+    /// this does nothing.
     func next() {
-        let target = first + SpreadPlanner.count(layout)
-        guard target <= count else { return }
+        var target = first + SpreadPlanner.count(layout)
+        var fromFinalPair: Int?
+        if target > count {
+            guard first < count else { return }
+            target = count
+            fromFinalPair = first
+        }
         places.step(def.id, to: target)
         first = target
+        endStepFrom = fromFinalPair
         backTarget = nil
         moved()
     }
@@ -90,12 +101,15 @@ final class ReaderModel {
     func previous() {
         guard first > 1 else { return }
         var target = first - 1
-        if first - 2 >= 1,
+        if let from = endStepFrom, from < first {
+            target = from  // the final pair `next()` stepped off
+        } else if first - 2 >= 1,
            SpreadPlanner.count(SpreadPlanner.layout(current: size(first - 2), next: size(first - 1), canvas: canvas, form: form)) == 2 {
             target = first - 2
         }
         places.step(def.id, to: target)
         first = target
+        endStepFrom = nil
         moved()
     }
 
@@ -106,6 +120,7 @@ final class ReaderModel {
         guard target != first else { return }
         places.jump(def.id, to: target)
         first = target
+        endStepFrom = nil
         // From the stored history, so a failed write cannot offer a place that was never saved.
         backTarget = places.history(def.id).first?.ordinal
         moved()
@@ -115,6 +130,7 @@ final class ReaderModel {
     func goBack() {
         if let ordinal = places.back(def.id) {
             first = ordinal
+            endStepFrom = nil
         }
         backTarget = nil
         moved()
