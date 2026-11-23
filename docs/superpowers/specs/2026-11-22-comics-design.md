@@ -179,10 +179,17 @@ the image: title, number and date on one line, then the hover text as a
 caption, then the bonus panel (SMBC) as a second image. Hover text is shown
 by default with a setting to make it tap-to-reveal.
 
-Moving: tap the right or left third, or swipe, for next and previous. On a
-strip taller than the screen, a tap on the right first scrolls down a screen
-and only advances at the bottom, so one thumb reads everything. Chrome (top
-bar, scrubber) is hidden while reading and toggled by tapping the middle.
+Moving: swipe, or tap a page-turn zone, for next and previous. In the wide
+form the zones are the right and left thirds and the middle toggles the
+chrome. In the narrow form (closed Duo) both zones sit under the right thumb:
+a 96 pt column at the right edge, from below the top safe-area inset (the
+camera) to the bottom one, its top third Previous and the rest Next; a tap
+anywhere else toggles the chrome. Faint chevrons mark the column for about
+two seconds when the reader opens and whenever the chrome is shown. On a
+strip taller than the screen, Next first scrolls down a screen and only
+advances at the bottom (Previous mirrors it), so one thumb reads everything.
+Chrome (top bar, scrubber) is hidden while reading. The geometry lives in
+`TapZones`.
 
 Closed Duo (and any narrow window):
 
@@ -197,7 +204,9 @@ Closed Duo (and any narrow window):
 │  Number 2140 · 3 May 2012│
 │  hover text caption…     │
 │                          │
-│ ‹ prev   (tap mid)  next ›│
+│      (tap: chrome)    ‹  │  ‹ = Previous (top third of the right column)
+│                          │
+│                       ›  │  › = Next (rest of the right column)
 └──────────────────────────┘
 tap middle →  top: ‹ Library   QC   ⋯
               bottom: |——●————————| 2140 / 5965

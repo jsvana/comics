@@ -66,6 +66,31 @@ final class ReaderUITests: XCTestCase {
         shot("wide-strips-3-4")
     }
 
+    func testNarrowTapZonesSitInTheRightEdgeColumn() {
+        let app = launch(canvas: Self.narrow, extra: ["-goto", "2"])
+        assertShows(app, "strip-2")
+        shot("narrow-hints")  // within the hints' two seconds
+        let canvas = element(app, "windowForm-narrow").frame
+        XCTAssertEqual(canvas.width, 466, accuracy: 1)
+        let prev = element(app, "reader-prev").frame
+        let next = element(app, "reader-next").frame
+        for (name, zone) in [("reader-prev", prev), ("reader-next", next)] {
+            XCTAssertGreaterThanOrEqual(zone.minX, canvas.maxX - 96 - 0.5, "\(name) is in the right 96 pt")
+            XCTAssertLessThanOrEqual(zone.maxX, canvas.maxX + 0.5, "\(name) is in the right 96 pt")
+            XCTAssertGreaterThan(zone.height, 100)
+        }
+        XCTAssertLessThanOrEqual(prev.maxY, next.minY + 0.5, "Previous is above Next")
+        XCTAssertGreaterThan(next.height, prev.height, "Next is the larger, lower part")
+
+        // The left third now toggles the chrome rather than going back.
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: canvas.minX + canvas.width / 6, dy: canvas.midY)).tap()
+        XCTAssertTrue(app.buttons["reader-menu"].waitForExistence(timeout: Self.timeout), "chrome did not show")
+        XCTAssertTrue(element(app, "strip-2").exists)
+        XCTAssertFalse(element(app, "strip-1").exists, "the left third did not go back")
+        shot("narrow-chrome-hints")
+    }
+
     func testTallStripScrollsBeforeAdvancing() {
         let app = launch(canvas: Self.narrow, extra: ["-goto", "5"])
         assertShows(app, "strip-5")

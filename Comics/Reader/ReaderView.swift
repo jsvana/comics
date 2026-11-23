@@ -13,6 +13,9 @@ struct ReaderView: View {
     @State private var scrub: Double?
     @State private var askNumber = false
     @State private var numberText = ""
+    /// The faint chevrons that show where the narrow form's tap zones are.
+    @State private var hints = false
+    @State private var hintTask: Task<Void, Never>?
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -22,14 +25,20 @@ struct ReaderView: View {
                     content: SpreadContent(model: model, viewport: geo.size),
                     resetKey: model.first,
                     viewport: geo.size,
+                    form: model.form,
+                    safeArea: geo.safeAreaInsets,
                     chromeVisible: chrome,
                     onAction: handle)
-                tapZones
+                tapZones(TapZones.frames(for: model.form, canvas: geo.size, safeArea: geo.safeAreaInsets))
                 if chrome { chromeBars }
                 overlays
             }
-            .onAppear { apply(geo.size) }
+            .onAppear {
+                apply(geo.size)
+                showHints()
+            }
             .onChange(of: geo.size) { _, size in apply(size) }
+            .onChange(of: chrome) { _, shown in if shown { showHints() } }
         }
         .background(Color(.systemBackground).ignoresSafeArea())
         // Always hidden: showing it with the chrome would change the safe area, and so the
@@ -68,26 +77,59 @@ struct ReaderView: View {
 
     // MARK: Tap zones
 
-    /// Accessibility handles for the three tap areas. They do not take touches themselves (the
-    /// strip's scroll view does, so it can scroll and zoom); VoiceOver activates them directly.
-    private var tapZones: some View {
-        HStack(spacing: 0) {
-            zone("reader-prev", "Previous") { handle(.previous) }
-            zone("reader-middle", "Show controls") { handle(.toggleChrome) }
-            zone("reader-next", "Next") { handle(.next) }
+    /// How long the tap-zone hints stay before fading out.
+    private static let hintSeconds: Double = 2
+
+    /// Accessibility handles for the three tap areas (placed by `TapZones`), and in the narrow form
+    /// the fading hints. They do not take touches themselves (the strip's scroll view does, so it
+    /// can scroll and zoom, and routes taps through `TapZones`); VoiceOver activates them directly.
+    private func tapZones(_ frames: TapZones.Frames) -> some View {
+        ZStack(alignment: .topLeading) {
+            zone("reader-middle", "Show controls", frames.toggleChrome) { handle(.toggleChrome) }
+            zone("reader-prev", "Previous", frames.previous) { handle(.previous) }
+            zone("reader-next", "Next", frames.next) { handle(.next) }
+            if model.form == .narrow {
+                hint("chevron.left", frames.previous)
+                hint("chevron.right", frames.next)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .allowsHitTesting(false)
     }
 
-    private func zone(_ id: String, _ label: String, _ action: @escaping () -> Void) -> some View {
+    private func zone(_ id: String, _ label: String, _ frame: CGRect, _ action: @escaping () -> Void) -> some View {
         Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: max(frame.width, 0), height: max(frame.height, 0))
             .contentShape(Rectangle())
             .accessibilityElement()
             .accessibilityLabel(label)
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier(id)
             .accessibilityAction { action() }
+            .position(x: frame.midX, y: frame.midY)
+    }
+
+    /// A faint chevron at the right edge of a zone, shown for a moment so the zone can be found.
+    private func hint(_ symbol: String, _ frame: CGRect) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 26, height: 56)
+            .background(.ultraThinMaterial, in: Capsule())
+            .opacity(hints ? 0.85 : 0)
+            .position(x: frame.maxX - 19, y: frame.midY)
+            .accessibilityHidden(true)
+    }
+
+    /// Shows the hints, then fades them out completely after `hintSeconds`.
+    private func showHints() {
+        hintTask?.cancel()
+        withAnimation(.easeOut(duration: 0.15)) { hints = true }
+        hintTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.hintSeconds))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.6)) { hints = false }
+        }
     }
 
     // MARK: Chrome
@@ -327,12 +369,15 @@ enum ReaderAction {
 }
 
 /// A UIKit scroll view around the SwiftUI spread: vertical scroll, pinch and double-tap zoom,
-/// outer-third taps that scroll a screen before turning the page, and horizontal swipes.
+/// page-turn taps (zones from `TapZones`) that scroll a screen before turning the page, and
+/// horizontal swipes.
 private struct ReaderScroller<Content: View>: UIViewControllerRepresentable {
     let content: Content
     /// When this changes (a new spread), zoom and scroll position reset.
     let resetKey: Int
     let viewport: CGSize
+    let form: WindowForm
+    let safeArea: EdgeInsets
     let chromeVisible: Bool
     let onAction: (ReaderAction) -> Void
 
@@ -343,6 +388,8 @@ private struct ReaderScroller<Content: View>: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: ReaderScrollController, context: Context) {
         controller.onAction = onAction
         controller.chromeVisible = chromeVisible
+        controller.form = form
+        controller.safeArea = safeArea
         controller.setContent(AnyView(content))
         if controller.resetKey != resetKey || controller.viewport != viewport {
             controller.resetKey = resetKey
@@ -355,19 +402,21 @@ private struct ReaderScroller<Content: View>: UIViewControllerRepresentable {
 final class ReaderScrollController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     /// Kept visible from the previous screen when a tap scrolls by a screen.
     private static let scrollOverlap: CGFloat = 48
-    /// A second middle tap within this many seconds is a double tap (zoom), not a chrome toggle.
+    /// A second chrome-area tap within this many seconds is a double tap (zoom), not a chrome toggle.
     private static let doubleTapWindow: TimeInterval = 0.28
     private static let doubleTapZoom: CGFloat = 2.5
 
     var onAction: (ReaderAction) -> Void = { _ in }
     var chromeVisible = false
+    var form: WindowForm = .narrow
+    var safeArea = EdgeInsets()
     var resetKey: Int?
     var viewport: CGSize = .zero
 
     private let scroll = UIScrollView()
     private let hosting = UIHostingController(rootView: AnyView(EmptyView()))
     private var contentSize: CGSize = .zero
-    private var pendingMiddleTap: DispatchWorkItem?
+    private var pendingChromeTap: DispatchWorkItem?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -411,8 +460,8 @@ final class ReaderScrollController: UIViewController, UIScrollViewDelegate, UIGe
     }
 
     func resetPosition() {
-        pendingMiddleTap?.cancel()
-        pendingMiddleTap = nil
+        pendingChromeTap?.cancel()
+        pendingChromeTap = nil
         scroll.setZoomScale(1, animated: false)
         scroll.setContentOffset(.zero, animated: false)
     }
@@ -448,22 +497,30 @@ final class ReaderScrollController: UIViewController, UIScrollViewDelegate, UIGe
             onAction(.hideChrome)
             return
         }
-        let x = point.x * scroll.zoomScale - scroll.contentOffset.x
-        let fraction = x / max(scroll.bounds.width, 1)
-        if fraction > 2.0 / 3.0 {
+        let onScreen = CGPoint(x: point.x * scroll.zoomScale - scroll.contentOffset.x,
+                               y: point.y * scroll.zoomScale - scroll.contentOffset.y)
+        switch TapZones.zone(at: onScreen, form: form, canvas: scroll.bounds.size, safeArea: safeArea) {
+        case .next:
             forward()
-        } else if fraction < 1.0 / 3.0 {
+        case .previous:
             backward()
-        } else if let pending = pendingMiddleTap {
+        case .toggleChrome:
+            chromeAreaTapped(at: point)
+        }
+    }
+
+    /// A single tap toggles the chrome (after the double-tap window); a double tap zooms.
+    private func chromeAreaTapped(at point: CGPoint) {
+        if let pending = pendingChromeTap {
             pending.cancel()
-            pendingMiddleTap = nil
+            pendingChromeTap = nil
             toggleZoom(at: point)
         } else {
             let work = DispatchWorkItem { [weak self] in
-                self?.pendingMiddleTap = nil
+                self?.pendingChromeTap = nil
                 self?.onAction(.toggleChrome)
             }
-            pendingMiddleTap = work
+            pendingChromeTap = work
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.doubleTapWindow, execute: work)
         }
     }
