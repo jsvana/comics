@@ -69,18 +69,44 @@ actor ImageCache {
         return CGSize(width: w, height: h)
     }
 
-    /// The first frame, scaled down so neither side exceeds `maxPixel`; never scaled up.
+    /// The first frame, scaled down so neither side exceeds `maxPixel`; never scaled up. For thumbnails.
     static func downsampled(_ file: URL, maxPixel: Int) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(file as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let size = pixelSize(of: file) else { return nil }
-        if Int(max(size.width, size.height)) <= maxPixel {
+        guard let size = pixelSize(of: file) else { return nil }
+        return decode(file, longSide: Int(max(size.width, size.height)) <= maxPixel ? nil : maxPixel)
+    }
+
+    /// The first frame, scaled down (never up) only as far as needed to hold at most `maxArea`
+    /// pixels. Capping the area rather than the longest side keeps a very tall strip at its
+    /// natural width, so it stays readable.
+    static func downsampled(_ file: URL, maxArea: Int) -> CGImage? {
+        guard let size = pixelSize(of: file) else { return nil }
+        return decode(file, longSide: decodeLongSide(for: size, maxArea: maxArea))
+    }
+
+    /// The longest side to decode an image of `size` at so it has at most `maxArea` pixels, or nil
+    /// if it fits whole. Allows for the short side being rounded up when scaled.
+    static func decodeLongSide(for size: CGSize, maxArea: Int) -> Int? {
+        let area = size.width * size.height
+        guard area > CGFloat(maxArea) else { return nil }
+        let long = max(size.width, size.height), short = min(size.width, size.height)
+        var side = max(1, Int((long * (CGFloat(maxArea) / area).squareRoot()).rounded(.down)))
+        while side > 1, CGFloat(side) * (short * CGFloat(side) / long).rounded(.up) > CGFloat(maxArea) { side -= 1 }
+        return side
+    }
+
+    /// Decodes the first frame whole (`longSide` nil) or scaled so its longest side is `longSide`.
+    private static func decode(_ file: URL, longSide: Int?) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(file as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return nil
+        }
+        guard let longSide else {
             return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
         }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+            kCGImageSourceThumbnailMaxPixelSize: longSide,
         ]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }

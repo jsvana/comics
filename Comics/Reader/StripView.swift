@@ -200,22 +200,31 @@ struct CaughtUpCard: View {
 /// main thread through `ImageCache.downsampled`.
 final class DecodedImages: @unchecked Sendable {
     static let shared = DecodedImages()
-    static let maxPixel = 4096
+    /// Largest decoded image, in pixels (64 MB at 4 bytes a pixel). A 740x14,000 strip fits whole.
+    static let maxArea = 16_000_000
+    /// Decoded bytes kept in memory, across all cached images.
+    static let costLimit = 160_000_000
 
     enum Result { case image(CGImage), missing, undecodable }
 
     private let cache = NSCache<NSURL, CGImage>()
 
-    init() { cache.countLimit = 16 }
+    init() {
+        cache.countLimit = 16
+        cache.totalCostLimit = Self.costLimit
+    }
+
+    /// What a decoded image costs the cache: its pixel bytes.
+    static func cost(of image: CGImage) -> Int { image.bytesPerRow * image.height }
 
     func image(_ file: URL) async -> Result {
         if let hit = cache.object(forKey: file as NSURL) { return .image(hit) }
         let result = await Task.detached(priority: .userInitiated) { () -> Result in
             guard FileManager.default.fileExists(atPath: file.path) else { return .missing }
-            guard let image = ImageCache.downsampled(file, maxPixel: Self.maxPixel) else { return .undecodable }
+            guard let image = ImageCache.downsampled(file, maxArea: Self.maxArea) else { return .undecodable }
             return .image(image)
         }.value
-        if case .image(let image) = result { cache.setObject(image, forKey: file as NSURL) }
+        if case .image(let image) = result { cache.setObject(image, forKey: file as NSURL, cost: Self.cost(of: image)) }
         return result
     }
 

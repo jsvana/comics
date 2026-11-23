@@ -119,6 +119,35 @@ final class ImageCacheTests: XCTestCase {
         XCTAssertLessThanOrEqual(image.width, 4096)
     }
 
+    func testTallStripKeepsItsNaturalWidthUnderTheAreaCap() throws {
+        let file = try write(Self.png(width: 740, height: 14_000), "tall-strip.png")
+        let image = try XCTUnwrap(ImageCache.downsampled(file, maxArea: DecodedImages.maxArea))
+        XCTAssertEqual(image.width, 740, "740x14,000 is about 10 megapixels: decoded whole")
+        XCTAssertEqual(image.height, 14_000)
+    }
+
+    func testOversizedImageIsScaledToTheAreaCap() throws {
+        let file = try write(Self.png(width: 2000, height: 20000), "huge.png")
+        let image = try XCTUnwrap(ImageCache.downsampled(file, maxArea: 16_000_000))
+        XCTAssertLessThanOrEqual(image.width * image.height, 16_000_000)
+        XCTAssertEqual(Double(image.width), 2000 * (0.4).squareRoot(), accuracy: 3, "scaled no further than the area needs")
+        XCTAssertEqual(Double(image.height) / Double(image.width), 10, accuracy: 0.05)
+    }
+
+    func testDecodeLongSide() {
+        XCTAssertNil(ImageCache.decodeLongSide(for: CGSize(width: 740, height: 14_000), maxArea: 16_000_000))
+        XCTAssertNil(ImageCache.decodeLongSide(for: CGSize(width: 4000, height: 4000), maxArea: 16_000_000))
+        XCTAssertEqual(ImageCache.decodeLongSide(for: CGSize(width: 8000, height: 8000), maxArea: 16_000_000), 4000)
+        XCTAssertEqual(ImageCache.decodeLongSide(for: CGSize(width: 1000, height: 64_000), maxArea: 16_000_000), 32_000)
+    }
+
+    func testDecodedImagesDecodeATallStripAtFullWidth() async throws {
+        let file = try write(Self.png(width: 740, height: 14_000), "tall-decoded.png")
+        guard case .image(let image) = await DecodedImages().image(file) else { return XCTFail("not decoded") }
+        XCTAssertEqual(image.width, 740)
+        XCTAssertEqual(DecodedImages.cost(of: image), image.bytesPerRow * 14_000)
+    }
+
     func testUndecodableFileGivesNil() throws {
         let file = try write(Data("not an image".utf8), "x.png")
         XCTAssertNil(ImageCache.pixelSize(of: file))
