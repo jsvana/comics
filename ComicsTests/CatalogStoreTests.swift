@@ -135,6 +135,34 @@ final class CatalogStoreTests: XCTestCase {
         XCTAssertEqual(missing.catalog.version, 1)
     }
 
+    func testTransportFailureIsNotRecordedAsACheck() async throws {
+        let http = StubHTTP()
+        http.failure = URLError(.notConnectedToInternet)
+        let clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = try make(http, now: { clock })
+        let offline = await store.refreshIfDue(force: false)
+        XCTAssertEqual(offline, .failed)
+        http.failure = nil
+        serve(http, try json(version: 2, ids: ["a"]))
+        let online = await store.refreshIfDue(force: false)
+        XCTAssertEqual(online, .adopted, "an offline first launch tries again at the next activation")
+        XCTAssertEqual(http.requested.count, 2)
+        let restarted = try make(http, now: { clock })
+        let again = await restarted.refreshIfDue(force: false)
+        XCTAssertEqual(again, .notDue, "the successful check was recorded")
+    }
+
+    func testHTTPStatusFailureIsRecordedAsACheck() async throws {
+        let http = StubHTTP()  // 404, as while the remote file does not exist
+        let clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = try make(http, now: { clock })
+        let first = await store.refreshIfDue(force: false)
+        XCTAssertEqual(first, .failed)
+        let second = await store.refreshIfDue(force: false)
+        XCTAssertEqual(second, .notDue)
+        XCTAssertEqual(http.requested.count, 1)
+    }
+
     func testAdoptionCallsHook() async throws {
         let http = StubHTTP()
         serve(http, try json(version: 2, ids: ["a", "b"]))

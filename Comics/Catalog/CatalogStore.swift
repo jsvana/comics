@@ -77,7 +77,7 @@ final class CatalogStore: @unchecked Sendable {
     }
 
     /// Downloads the remote catalog unless it was checked in the last 24 hours (`force` ignores
-    /// that), and adopts it if it decodes, has the supported schema and a version not lower than
+    /// that; only a completed HTTP exchange counts as a check, not a transport failure), and adopts it if it decodes, has the supported schema and a version not lower than
     /// the current one. Concurrent calls collapse into the one already running.
     @discardableResult
     func refreshIfDue(force: Bool) async -> RefreshOutcome {
@@ -93,9 +93,11 @@ final class CatalogStore: @unchecked Sendable {
         let data: Data
         do {
             (data, _) = try await http.get(url)
-        } catch {
-            if !(error is CancellationError) { recordCheck() }
+        } catch HTTPError.status {
+            recordCheck()  // the server answered (a 404 while the remote file does not exist, say)
             return .failed
+        } catch {
+            return .failed  // offline or cancelled: try again at the next activation, not in 24 hours
         }
         recordCheck()
         guard let downloaded = Self.usable(data) else { return .rejected }
