@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 1,
+  "version": 2,
   "comics": [
     {
       "id": "xkcd",
@@ -37,7 +37,7 @@
       "index": {
         "kind": "numbered",
         "latestURL": "https://www.questionablecontent.net/",
-        "latestPattern": "<img id=\"strip\" src=\"[^\"]*/comics/(?<n>\\d+)\\.png\"",
+        "latestPattern": "<img id=\"strip\" src=\"[^\"]*/comics/(?<n>\\d+)\\.\\w+\"",
         "first": 1,
         "skip": []
       },

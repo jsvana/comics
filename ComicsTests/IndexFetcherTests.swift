@@ -73,6 +73,17 @@ final class IndexFetcherTests: XCTestCase {
         XCTAssertEqual(entries.count, Int(expected))
     }
 
+    func testQCLatestAcceptsAnyImageExtension() async throws {
+        let def = try comic("qc")
+        let html = String(decoding: StubHTTP.fixture("qc-front.html"), as: UTF8.self)
+        let expected = try XCTUnwrap(Pattern.first("<img id=\"strip\" src=\"[^\"]*/comics/(?<n>\\d+)\\.png\"", in: html, group: "n"))
+        let jpeg = html.replacingOccurrences(of: "/comics/\(expected).png", with: "/comics/\(expected).jpg")
+        XCTAssertNotEqual(jpeg, html)
+        let http = StubHTTP(routes: ["https://www.questionablecontent.net/": route(Data(jpeg.utf8))])
+        let entries = try await IndexFetcher(http: http).newEntries(def.index, knownCount: 0, lastKey: nil, progress: nil)
+        XCTAssertEqual(entries.last?.key, expected)
+    }
+
     private let doaBase = "https://www.dumbingofage.com/wp-json/wp/v2/comic?per_page=100&order=asc&orderby=date&_fields=id,slug,date,title,link"
 
     func testWordPressPagesWithOffset() async throws {
