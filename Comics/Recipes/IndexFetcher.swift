@@ -90,7 +90,8 @@ struct IndexFetcher {
         _ r: IndexRecipe.LinkList, knownCount: Int, lastKey: String?, progress: (@Sendable (Double) -> Void)?
     ) async throws -> [IndexEntry] {
         let body = try await text(r.url)
-        var items = Pattern.all(r.itemPattern, in: body).compactMap { m -> IndexEntry? in
+        let matches = Pattern.all(r.itemPattern, in: body)
+        func entry(_ m: [String: String]) -> IndexEntry? {
             guard let key = m["key"] else { return nil }
             return IndexEntry(
                 key: key,
@@ -98,6 +99,19 @@ struct IndexFetcher {
                 date: m["date"],
                 page: URL(string: r.pageTemplate.replacingOccurrences(of: "{key}", with: key)))
         }
+        // A list that is not in reading order can capture a number per item as `order` (a post
+        // number, say). Items are then read in ascending `order`, and a repeated key keeps its
+        // highest one.
+        let numbered = matches.compactMap { m -> (Int, IndexEntry)? in
+            guard let order = m["order"].flatMap({ Int($0) }), let item = entry(m) else { return nil }
+            return (order, item)
+        }
+        if !numbered.isEmpty {
+            var seen = Set<String>()
+            let newestFirst = numbered.sorted { $0.0 > $1.0 }.map(\.1).filter { seen.insert($0.key).inserted }
+            return try tail(Array(newestFirst.reversed()), knownCount: knownCount, lastKey: lastKey, progress: progress)
+        }
+        var items = matches.compactMap(entry)
         guard !items.isEmpty else { throw IndexError.noMatch }
         // Oldest first, then keep each key's first occurrence. Pages that open with featured
         // teasers for recent strips repeat those keys near the newest end; the occurrence nearest
@@ -105,6 +119,12 @@ struct IndexFetcher {
         if r.newestFirst { items.reverse() }
         var seen = Set<String>()
         items = items.filter { seen.insert($0.key).inserted }
+        return try tail(items, knownCount: knownCount, lastKey: lastKey, progress: progress)
+    }
+
+    /// The entries after what is already known.
+    private func tail(_ items: [IndexEntry], knownCount: Int, lastKey: String?,
+                      progress: (@Sendable (Double) -> Void)?) throws -> [IndexEntry] {
         progress?(1)
         if let lastKey {
             guard let i = items.firstIndex(where: { $0.key == lastKey }) else { throw IndexError.lastKeyMissing }

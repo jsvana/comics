@@ -11,10 +11,22 @@ final class CatalogTests: XCTestCase {
         try JSONDecoder().decode(Catalog.self, from: bundledData())
     }
 
-    func testDecodesThreeComicsInOrder() throws {
+    func testDecodesTheComicsInOrder() throws {
         let catalog = try bundledCatalog()
         XCTAssertEqual(catalog.schema, Catalog.supportedSchema)
-        XCTAssertEqual(catalog.comics.map(\.id), ["xkcd", "qc", "pbf"])
+        XCTAssertEqual(catalog.comics.map(\.id), ["xkcd", "qc", "doa", "pbf", "smbc", "aurora"])
+    }
+
+    func testHostExceptionsAreOnlyOnTheComicsThatNeedThem() throws {
+        let comics = Dictionary(uniqueKeysWithValues: try bundledCatalog().comics.map { ($0.id, $0) })
+        XCTAssertEqual(comics["doa"]?.browserHosts, ["www.dumbingofage.com", "dumbingofage.com"])
+        XCTAssertEqual(comics["smbc"]?.lenientHosts, ["www.smbc-comics.com", "smbc-comics.com"])
+        for id in ["xkcd", "qc", "pbf"] {
+            XCTAssertNil(comics[id]?.browserHosts, id)
+            XCTAssertNil(comics[id]?.lenientHosts, id)
+        }
+        XCTAssertNil(comics["doa"]?.lenientHosts)
+        XCTAssertNil(comics["smbc"]?.browserHosts)
     }
 
     func testIndexKinds() throws {

@@ -168,4 +168,25 @@ final class IndexFetcherTests: XCTestCase {
             XCTAssertEqual(error as? IndexError, .noMatch)
         }
     }
+
+    func testLinkListSortsByOrderCaptureAndKeepsHighestForRepeats() async throws {
+        // Out of reading order, with "b" listed twice: its higher number is its real place.
+        let html = """
+        <option value='30' data-u='/c/c/'>C</option>
+        <option value='2' data-u='/c/b/'>B early</option>
+        <option value='10' data-u='/c/a/'>A</option>
+        <option value='20' data-u='/c/b/'>B</option>
+        """
+        let http = StubHTTP()
+        http.routes["https://example.com/list"] = (200, [:], Data(html.utf8))
+        let recipe = IndexRecipe.linkList(.init(
+            url: URL(string: "https://example.com/list")!,
+            itemPattern: "<option value='(?<order>\\d+)' data-u='/c/(?<key>[^/]+)/'>(?<title>[^<]*)",
+            pageTemplate: "https://example.com/c/{key}/", newestFirst: false))
+        let all = try await IndexFetcher(http: http).newEntries(recipe, knownCount: 0, lastKey: nil, progress: nil)
+        XCTAssertEqual(all.map(\.key), ["a", "b", "c"])
+        XCTAssertEqual(all[1].title, "B")
+        let after = try await IndexFetcher(http: http).newEntries(recipe, knownCount: 2, lastKey: "b", progress: nil)
+        XCTAssertEqual(after.map(\.key), ["c"])
+    }
 }

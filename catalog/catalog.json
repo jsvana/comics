@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 4,
+  "version": 5,
   "comics": [
     {
       "id": "xkcd",
@@ -114,6 +114,27 @@
         "www.smbc-comics.com",
         "smbc-comics.com"
       ]
+    },
+    {
+      "id": "aurora",
+      "title": "Aurora",
+      "author": "Red",
+      "home": "https://comicaurora.com/",
+      "about": "A fantasy story comic about gods, elements and a city that lost its guardian. Full pages; updates Monday, Wednesday, Friday.",
+      "shape": "portrait",
+      "index": {
+        "kind": "linkList",
+        "url": "https://comicaurora.com/archive/",
+        "itemPattern": "<option value='(?<order>\\d+)' data-webcomic-url='https://comicaurora\\.com/aurora/(?<key>[^'/]+)/'[^>]*>(?<title>[^<]*)",
+        "pageTemplate": "https://comicaurora.com/aurora/{key}/",
+        "newestFirst": false
+      },
+      "strip": {
+        "kind": "html",
+        "url": "{page}",
+        "imagePattern": "widget_mgsisk_webcomic_collection_widget_webcomicmedia\"[^>]*>.*?<img[^>]*?\\ssrc=\"(?<v>[^\"]+)\"",
+        "hoverPattern": "widget_mgsisk_webcomic_collection_widget_webcomicmedia\"[^>]*>.*?<img[^>]*?\\stitle=\"(?<v>[^\"]*)\""
+      }
     }
   ]
 }

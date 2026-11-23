@@ -16,6 +16,15 @@ final class SpreadPlannerTests: XCTestCase {
         XCTAssertEqual(plan(portrait, portrait), .sideBySide)
     }
 
+    func testTwoSquareStripsGoSideBySide() {
+        let square = CGSize(width: 800, height: 800)
+        XCTAssertEqual(plan(square, square), .sideBySide)
+    }
+
+    func testWideStripThenTallInfographicIsSingle() {
+        XCTAssertEqual(plan(strip, CGSize(width: 740, height: 2000)), .single)
+    }
+
     func testTwoWideStripsStack() {
         XCTAssertEqual(plan(strip, strip), .stacked)
     }

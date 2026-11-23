@@ -87,6 +87,47 @@ final class HTTPClientTests: XCTestCase {
         XCTAssertEqual(HTTPClientIdentity.userAgent, "Comics/1.0")
     }
 
+    private func exceptionComic(browser: [String]? = nil, lenient: [String]? = nil) -> ComicDef {
+        var def = ComicDef(
+            id: "x", title: "X", author: "A", home: URL(string: "https://one.example/")!, about: "", shape: .wide,
+            index: .numbered(.init(latestURL: URL(string: "https://one.example/latest")!, latestPattern: "(?<n>\\d+)", first: 1, skip: [])),
+            strip: .json(.init(url: "https://one.example/{key}.json", page: "https://one.example/{key}", image: "img", title: nil, hover: nil)))
+        def.browserHosts = browser
+        def.lenientHosts = lenient
+        return def
+    }
+
+    func testBrowserNameGoesOnlyToListedHosts() async throws {
+        LenientHosts.configure(from: [exceptionComic(browser: ["Browser.Example"])])
+        defer { LenientHosts.configure(from: []) }
+        let client = makeClient()
+        _ = try await client.get(URL(string: "https://browser.example/a")!)
+        _ = try await client.get(URL(string: "https://one.example/a")!)
+        let agents = Dictionary(uniqueKeysWithValues: RecordingURLProtocol.events.map { ($0.url.host!, $0.userAgent) })
+        XCTAssertEqual(agents["browser.example"], LenientHosts.browserUserAgent)
+        XCTAssertEqual(agents["one.example"], "Comics/1.0")
+    }
+
+    func testLenientHostBodyIsAcceptedUnderA5xxStatus() async throws {
+        LenientHosts.configure(from: [exceptionComic(lenient: ["lenient.example"])])
+        defer { LenientHosts.configure(from: []) }
+        RecordingURLProtocol.statusByPath["/page"] = 500
+        RecordingURLProtocol.statusByPath["/gone"] = 404
+        let client = makeClient()
+        let (data, response) = try await client.get(URL(string: "https://lenient.example/page")!)
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "ok")
+        XCTAssertEqual(response.statusCode, 500)
+        // Only 5xx is tolerated, and only on the listed host.
+        for url in ["https://lenient.example/gone", "https://one.example/page"] {
+            do {
+                _ = try await client.get(URL(string: url)!)
+                XCTFail("expected an error for \(url)")
+            } catch let error as HTTPError {
+                XCTAssertEqual(error, .status(url.hasSuffix("gone") ? 404 : 500))
+            }
+        }
+    }
+
     func testFailedRequestStillReleasesTheHost() async throws {
         RecordingURLProtocol.statusByPath["/bad"] = 500
         let client = makeClient(gap: .milliseconds(10))
