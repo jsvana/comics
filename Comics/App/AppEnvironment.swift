@@ -12,7 +12,8 @@ struct AppEnvironment {
     let db: Database
     let library: LibraryStore
     let places: PlaceKeeper
-    /// Keeps the iCloud restore copy current; `restoreMissing` runs whenever the app becomes active.
+    /// Keeps the iCloud restore copy current; `restoreMissing` runs whenever the app becomes active
+    /// and whenever iCloud delivers changes (`followCloudChanges`).
     let mirror: CloudMirror
     let loader: StripLoader
     let images: ImageCache
@@ -121,6 +122,14 @@ struct AppEnvironment {
         await checkCatalog()
         await restore(await currentCatalog())
         await refreshLibrary()
+    }
+
+    /// Runs until cancelled: each time iCloud delivers changes made elsewhere (a fresh install's
+    /// copy can arrive after the first activation found the store empty), restores the comics only
+    /// the iCloud copy knows, then calls `restored` (the library screen reloads there).
+    func followCloudChanges(then restored: () async -> Void) async {
+        let catalogStore = catalog
+        await mirror.followExternalChanges(catalog: { await MainActor.run { catalogStore.catalog } }, then: restored)
     }
 
     /// Checks the remote catalog (daily, or now with `force`). Never in fixture mode.

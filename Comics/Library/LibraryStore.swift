@@ -21,6 +21,13 @@ struct ComicSummary: Equatable, Sendable {
     var status: CardStatus { PlaceKeeper.status(bookmark: bookmark, count: count, baseCount: baseCount) }
 }
 
+/// What `LibraryStore.onChange` reports.
+enum LibraryChange: Equatable {
+    /// `firstTime` is true when the comic had no local row before (not even a removed one).
+    case added(firstTime: Bool)
+    case removed
+}
+
 enum LibraryError: Error, Equatable {
     /// `refresh` was called for a comic that was never added (or has been purged).
     case notInLibrary
@@ -44,9 +51,9 @@ final class LibraryStore: @unchecked Sendable {
     @ObservationIgnored private let db: Database
     @ObservationIgnored private let index: IndexFetcher
     @ObservationIgnored private let now: () -> Date
-    /// Called with the comic id after `add` and `remove` commit, on the calling thread. Set once
-    /// before use (the cloud mirror does this at start-up).
-    @ObservationIgnored var onChange: ((String) -> Void)?
+    /// Called with the comic id and what happened after `add` and `remove` commit, on the calling
+    /// thread. Set once before use (the cloud mirror does this at start-up).
+    @ObservationIgnored var onChange: ((String, LibraryChange) -> Void)?
 
     init(db: Database, index: IndexFetcher, now: @escaping () -> Date = Date.init) {
         self.db = db
@@ -73,8 +80,9 @@ final class LibraryStore: @unchecked Sendable {
         }
         let (known, lastKey) = try await db.queue.read { try Self.tail(id, $0) }
         let entries = try await index.newEntries(def.index, knownCount: known, lastKey: lastKey, progress: progress)
-        try await db.queue.write { dbc in
-            var row = try ComicRow.fetchOne(dbc, key: id) ?? ComicRow(id: id, definition: definition, addedAt: stamp.timeIntervalSince1970)
+        let firstTime = try await db.queue.write { dbc -> Bool in
+            let existing = try ComicRow.fetchOne(dbc, key: id)
+            var row = existing ?? ComicRow(id: id, definition: definition, addedAt: stamp.timeIntervalSince1970)
             row.definition = definition
             row.removedAt = nil
             row.lastRefreshed = stamp.timeIntervalSince1970
@@ -96,9 +104,10 @@ final class LibraryStore: @unchecked Sendable {
                     try row.update(dbc)
                 }
             }
+            return existing == nil
         }
         changed()
-        onChange?(id)
+        onChange?(id, .added(firstTime: firstTime))
     }
 
     /// Hides the comic. Its strips and bookmark are kept for 30 days.
@@ -108,7 +117,7 @@ final class LibraryStore: @unchecked Sendable {
             try dbc.execute(sql: "UPDATE comic SET removedAt = ? WHERE id = ? AND removedAt IS NULL", arguments: [stamp, id])
         }
         changed()
-        onChange?(id)
+        onChange?(id, .removed)
     }
 
     /// Deletes comics removed more than 30 days ago, with their strips, bookmark and jumps.

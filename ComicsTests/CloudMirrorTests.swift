@@ -36,20 +36,28 @@ final class CloudMirrorTests: XCTestCase {
         cloud.set(try SavedPlace.encoder().encode(place), forKey: "place.\(place.comicID)")
     }
 
-    private func saved(_ cloud: MemoryCloud, _ id: String) throws -> SavedPlace {
-        try SavedPlace.decoder().decode(SavedPlace.self, from: try XCTUnwrap(cloud.data(forKey: "place.\(id)")))
+    /// The pushed place for `id`, once every push queued so far has reached the cloud.
+    private func saved(_ r: Rig, _ id: String) throws -> SavedPlace {
+        r.mirror.flush()
+        return try SavedPlace.decoder().decode(SavedPlace.self, from: try XCTUnwrap(r.cloud.data(forKey: "place.\(id)")))
+    }
+
+    private func waitUntil(_ what: String, timeout: TimeInterval = 10, _ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(condition(), "timed out waiting for \(what)")
     }
 
     func testPushOnEveryBookmarkChange() async throws {
         let r = try rig()
         try await r.library.add(def(), start: .first)
         r.places.step("num", to: 4)
-        let p = try saved(r.cloud, "num")
+        let p = try saved(r, "num")
         XCTAssertEqual(p.ordinal, 4)
         XCTAssertEqual(p.key, "4")
         XCTAssertFalse(p.removed)
         r.places.jump("num", to: 8)
-        let q = try saved(r.cloud, "num")
+        let q = try saved(r, "num")
         XCTAssertEqual(q.ordinal, 8)
         XCTAssertEqual(q.history.map(\.ordinal), [4])
     }
@@ -57,9 +65,9 @@ final class CloudMirrorTests: XCTestCase {
     func testPushOnAddAndRemove() async throws {
         let r = try rig()
         try await r.library.add(def(), start: .latest)
-        XCTAssertEqual(try saved(r.cloud, "num").ordinal, 10)
+        XCTAssertEqual(try saved(r, "num").ordinal, 10)
         r.library.remove("num")
-        let p = try saved(r.cloud, "num")
+        let p = try saved(r, "num")
         XCTAssertTrue(p.removed)
         XCTAssertEqual(p.ordinal, 10)
     }
@@ -92,7 +100,7 @@ final class CloudMirrorTests: XCTestCase {
         XCTAssertEqual(r.places.bookmark("num"), 4)
         XCTAssertEqual(r.places.history("num"), [JumpEntry(ordinal: 2, key: "2", at: when)])
         // The cloud copy was not overwritten with a start-of-comic bookmark along the way.
-        XCTAssertEqual(try saved(r.cloud, "num").ordinal, 4)
+        XCTAssertEqual(try saved(r, "num").ordinal, 4)
     }
 
     func testRestoreFollowsKeyNotOrdinal() async throws {
@@ -114,7 +122,7 @@ final class CloudMirrorTests: XCTestCase {
         try put(r.cloud, SavedPlace(comicID: "num", ordinal: 7, key: "7", history: [], removed: false))
         await r.mirror.restoreMissing(catalog: catalog(def()))
         XCTAssertEqual(r.places.bookmark("num"), 1)
-        XCTAssertEqual(try saved(r.cloud, "num").ordinal, 7)  // cloud copy untouched
+        XCTAssertEqual(try saved(r, "num").ordinal, 7)  // cloud copy untouched
     }
 
     func testRestoreIgnoresRemovedAndUnknownComics() async throws {
@@ -158,7 +166,7 @@ final class CloudMirrorTests: XCTestCase {
         try await ProgressFile.apply(file, catalog: catalog(def()), library: r.library, places: r.places)
         XCTAssertEqual(r.places.bookmark("num"), 9)
         XCTAssertEqual(r.places.history("num").map(\.ordinal), [3])
-        XCTAssertEqual(try saved(r.cloud, "num").ordinal, 9)
+        XCTAssertEqual(try saved(r, "num").ordinal, 9)
     }
 
     func testApplyRejectsCorruptFile() async throws {
@@ -187,5 +195,106 @@ final class CloudMirrorTests: XCTestCase {
         let ok = try await ProgressFile.apply(file, catalog: catalog(def()), library: r.library, places: r.places)
         XCTAssertEqual(ok, ["gone"])
         XCTAssertEqual(r.places.bookmark("num"), 3)
+    }
+
+    // MARK: A fresh install whose iCloud copy arrives late
+
+    func testAddingAComicWithNoLocalRecordTakesThePlaceFromTheCloud() async throws {
+        let r = try rig()
+        let when = Date(timeIntervalSince1970: 1_700_000_000)
+        try put(r.cloud, SavedPlace(comicID: "num", ordinal: 7, key: "7", history: [JumpEntry(ordinal: 2, key: "2", at: when)], removed: false))
+        try await r.library.add(def(), start: .first)  // the user adds it by hand before restore ran
+        XCTAssertEqual(r.places.bookmark("num"), 7)
+        XCTAssertEqual(r.places.history("num"), [JumpEntry(ordinal: 2, key: "2", at: when)])
+        let p = try saved(r, "num")
+        XCTAssertEqual(p.ordinal, 7, "the cloud copy was not overwritten with the starting strip")
+        XCTAssertEqual(p.history.map(\.ordinal), [2])
+    }
+
+    func testAddingNeverPushesTheStartingStripOverACloudPlace() async throws {
+        let r = try rig()
+        try put(r.cloud, SavedPlace(comicID: "num", ordinal: 7, key: "7", history: [], removed: false))
+        let seen = Locked<[Int]>([])
+        r.cloud.onSet = { key, data in
+            guard key == "place.num", let data, let p = try? SavedPlace.decoder().decode(SavedPlace.self, from: data) else { return }
+            seen.mutate { $0.append(p.ordinal) }
+        }
+        try await r.library.add(def(), start: .latest)
+        r.mirror.flush()
+        XCTAssertFalse(seen.value.contains(10), "pushed \(seen.value)")
+        XCTAssertEqual(r.places.bookmark("num"), 7)
+    }
+
+    func testAddingFollowsTheCloudKeyWhenTheIndexShifted() async throws {
+        let r = try rig()
+        try put(r.cloud, SavedPlace(comicID: "num", ordinal: 4, key: "4", history: [], removed: false))
+        try await r.library.add(def(skip: [3]), start: .first)
+        XCTAssertEqual(r.places.bookmark("num"), 3)  // key "4" is strip number 3 here
+    }
+
+    func testAddingIgnoresACloudPlaceMarkedRemoved() async throws {
+        let r = try rig()
+        try put(r.cloud, SavedPlace(comicID: "num", ordinal: 7, key: "7", history: [], removed: true))
+        try await r.library.add(def(), start: .first)
+        XCTAssertEqual(r.places.bookmark("num"), 1)
+        XCTAssertEqual(try saved(r, "num").ordinal, 1)
+    }
+
+    func testReAddingARemovedComicKeepsTheLocalPlace() async throws {
+        let r = try rig()
+        try await r.library.add(def(), start: .first)
+        r.places.step("num", to: 3)
+        r.library.remove("num")
+        try put(r.cloud, SavedPlace(comicID: "num", ordinal: 9, key: "9", history: [], removed: false))
+        try await r.library.add(def(), start: .first)
+        XCTAssertEqual(r.places.bookmark("num"), 3, "a local record exists, so local wins")
+        XCTAssertEqual(try saved(r, "num").ordinal, 3)
+    }
+
+    func testExternalChangeRestoresComicsOnlyTheCloudKnows() async throws {
+        let r = try rig()
+        let reloads = Locked(0)
+        let follower = Task {
+            await r.mirror.followExternalChanges(catalog: { self.catalog(self.def()) }, then: { reloads.mutate { $0 += 1 } })
+        }
+        defer { follower.cancel() }
+        // First activation found an empty store; the iCloud copy arrives afterwards.
+        try put(r.cloud, SavedPlace(comicID: "num", ordinal: 6, key: "6", history: [], removed: false))
+        r.cloud.simulateExternalChange()
+        await waitUntil("restored and reloaded") { reloads.value >= 1 }
+        XCTAssertEqual(r.library.activeIDs(), ["num"])
+        XCTAssertEqual(r.places.bookmark("num"), 6)
+        XCTAssertEqual(try saved(r, "num").ordinal, 6)
+    }
+
+    func testExternalChangeLeavesExistingComicsAlone() async throws {
+        let r = try rig()
+        try await r.library.add(def(), start: .first)
+        r.places.step("num", to: 3)
+        let reloads = Locked(0)
+        let follower = Task {
+            await r.mirror.followExternalChanges(catalog: { self.catalog(self.def()) }, then: { reloads.mutate { $0 += 1 } })
+        }
+        defer { follower.cancel() }
+        try put(r.cloud, SavedPlace(comicID: "num", ordinal: 9, key: "9", history: [], removed: false))
+        r.cloud.simulateExternalChange()
+        await waitUntil("handled") { reloads.value >= 1 }
+        XCTAssertEqual(r.places.bookmark("num"), 3)
+    }
+
+    // MARK: Pushing off the main thread
+
+    func testPushRunsOffTheCallingThreadAndTheLastWriteWins() async throws {
+        let r = try rig()
+        try await r.library.add(def(), start: .first)
+        r.mirror.flush()
+        let threads = Locked<[Bool]>([])
+        r.cloud.onSet = { _, _ in threads.mutate { $0.append(Thread.isMainThread) } }
+        await MainActor.run {
+            for n in 2...8 { r.places.step("num", to: n) }
+        }
+        XCTAssertEqual(try saved(r, "num").ordinal, 8)
+        XCTAssertFalse(threads.value.isEmpty)
+        XCTAssertFalse(threads.value.contains(true), "a cloud write ran on the main thread")
     }
 }

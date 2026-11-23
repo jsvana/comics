@@ -34,7 +34,8 @@ private extension View {
 
 /// Reads the window size it is given and derives the layout form from it. Shows the library, or
 /// the reader when a comic is open (`-openComic <id>` opens one at launch). Each time the app
-/// becomes active it runs the launch upkeep (`AppEnvironment.becameActive`).
+/// becomes active it runs the launch upkeep (`AppEnvironment.becameActive`); while it exists it
+/// restores comics that an iCloud change reveals (`AppEnvironment.followCloudChanges`).
 struct RootView: View {
     let environment: AppEnvironment
     @State private var library: LibraryModel
@@ -68,6 +69,7 @@ struct RootView: View {
             Text(openError ?? "")
         }
         .task { await openFromLaunchArgs() }
+        .task { await environment.followCloudChanges { await library.reload() } }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             await upkeep()
